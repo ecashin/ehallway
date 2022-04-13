@@ -7,6 +7,5 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.56"
-oxhttp = "0.1.4"
-rocket = { version = "0.5.0-rc1", features = ["tls"] }
+rocket = { version = "0.5.0-rc.1", git = "https://github.com/SergioBenitez/Rocket", features = ["tls"] }
 
