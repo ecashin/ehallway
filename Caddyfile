@@ -1,0 +1,20 @@
+{
+	email ed.cashin@acm.org
+	http_port 8888
+	https_port 8443
+}
+
+http://localhost:8080 {
+	respond "Not SSL"
+}
+
+localhost:4443 {
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+	handle {
+		root * /home/ecashin/src/rust/vhallway/site
+		try_files {path} /index.html
+		file_server
+	}
+}
