@@ -4,16 +4,16 @@
 	https_port 8443
 }
 
-http://localhost:8080 {
+http://localhost:8000 {
 	respond "Not SSL"
 }
 
 localhost:4443 {
 	handle /api/* {
-		reverse_proxy backend:8000
+		reverse_proxy backend:8080
 	}
 	handle {
-		root * /home/ecashin/src/rust/vhallway/site
+		root * /home/ecashin/src/rust/vhallway/ui/dist
 		try_files {path} /index.html
 		file_server
 	}
