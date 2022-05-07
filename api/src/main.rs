@@ -1,11 +1,20 @@
+use clap::Parser;
 use rocket::{form::*, get, post, response::Redirect, routes, State};
 use rocket_auth::{prelude::Error, *};
 use rocket_dyn_templates::Template;
+use rocket::fs::FileServer;
 use serde_json::json;
 
 use std::*;
-use std::{convert::TryInto, result::Result};
+use std::{convert::TryInto, path::PathBuf, result::Result};
 use tokio_postgres::{connect, Client};
+
+#[derive(Parser)]
+struct Cli {
+    #[clap(long, value_name = "DIRECTORY")]
+    static_path: PathBuf,
+}
+
 #[get("/login")]
 fn get_login() -> Template {
     Template::render("login", json!({}))
@@ -66,11 +75,14 @@ async fn show_all_users(client: &State<sync::Arc<Client>>, user: Option<User>) -
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    let cli = Cli::parse();
+
+    println!("{}", cli.static_path.display());
+
     use tokio_postgres::NoTls;
     let (client, conn) = connect("host=localhost user=vhallway password=vhallway", NoTls).await?;
     let client = sync::Arc::new(client);
     let users: Users = client.clone().into();
-    
 
     tokio::spawn(async move {
         if let Err(e) = conn.await {
@@ -92,6 +104,7 @@ async fn main() -> Result<(), Error> {
                 show_all_users
             ],
         )
+        .mount("/", FileServer::from(cli.static_path))
         .manage(client)
         .manage(users)
         .attach(Template::fairing())
