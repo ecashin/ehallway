@@ -9,7 +9,7 @@ edition = "2021"
 anyhow = "1.0.56"
 rocket = { version = "0.5.0-rc.1", features = ["json"] }
 rocket_auth = { version = "0.4.0", features = ["tokio-postgres"] }
-rocket_dyn_templates = { version = "0.1.0-rc.1", features = ["handlebars"] }
+rocket_dyn_templates = { version = "0.1.0-rc.1", features = ["tera"] }
 rocket_http = "0.4.10"
 serde_json = "1.0.79"
 tokio = "1.17.0"
