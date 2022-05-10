@@ -1,10 +1,9 @@
 use clap::Parser;
+use rocket::fs::FileServer;
 use rocket::{form::*, get, post, response::Redirect, routes, State};
 use rocket_auth::{prelude::Error, *};
 use rocket_dyn_templates::Template;
-use rocket::fs::FileServer;
 use serde_json::json;
-
 use std::*;
 use std::{convert::TryInto, path::PathBuf, result::Result};
 use tokio_postgres::{connect, Client};
@@ -57,8 +56,36 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
+const USER_VAL_CREATE_TABLE: &str = "
+CREATE TABLE IF NOT EXISTS user_value (
+    email VARCHAR (254) UNIQUE NOT NULL primary key,
+    value integer DEFAULT 0
+);
+";
+
+const USER_VAL_INC: &str = "
+update user_value
+  set value = value + 1
+where email = $1;
+";
+
+use rocket::serde::json::Value;
+
+#[get("/inc", format = "json")]
+async fn increment_user_value(
+    client: &State<sync::Arc<Client>>,
+    user: User,
+) -> Result<Value, Error> {
+    client.execute(USER_VAL_CREATE_TABLE, &[]).await?;
+    client.query(USER_VAL_INC, &[&user.email()]).await?;
+    Ok(json!({ "metric": 3.3 }))
+}
+
 #[get("/show_all_users")]
-async fn show_all_users(client: &State<sync::Arc<Client>>, user: Option<User>) -> Result<Template, Error> {
+async fn show_all_users(
+    client: &State<sync::Arc<Client>>,
+    user: Option<User>,
+) -> Result<Template, Error> {
     let users: Vec<User> = client
         .query("select * from users;", &[])
         .await?
@@ -74,7 +101,7 @@ async fn show_all_users(client: &State<sync::Arc<Client>>, user: Option<User>) -
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     println!("{}", cli.static_path.display());
@@ -89,8 +116,8 @@ async fn main() -> Result<(), Error> {
             eprintln!("TokioPostgresError: {}", e);
         }
     });
-    users.create_table().await?; 
-    rocket::build()
+    users.create_table().await?;
+    let app = rocket::build()
         .mount(
             "/",
             routes![
@@ -108,8 +135,10 @@ async fn main() -> Result<(), Error> {
         .manage(client)
         .manage(users)
         .attach(Template::fairing())
+        .ignite()
+        .await?
         .launch()
-        .await
-        .unwrap();
+        .await?;
+
     Ok(())
 }
