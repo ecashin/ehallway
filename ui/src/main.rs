@@ -13,9 +13,7 @@ impl Component for Model {
     type Properties = ();
 
     fn create(_ctx: &Context<Self>) -> Self {
-        Self {
-            value: 0,
-        }
+        Self { value: 0 }
     }
 
     fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -38,5 +36,8 @@ impl Component for Model {
 }
 
 fn main() {
-    yew::start_app::<Model>();
+    let app_div = gloo_utils::document()
+        .get_element_by_id("vhallway")
+        .unwrap();
+    yew::start_app_in_element::<Model>(app_div);
 }
