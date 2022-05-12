@@ -71,14 +71,21 @@ where email = $1;
 
 use rocket::serde::json::Value;
 
-#[get("/inc", format = "json")]
+#[get("/inc")]
 async fn increment_user_value(
     client: &State<sync::Arc<Client>>,
     user: User,
 ) -> Result<Value, Error> {
     client.execute(USER_VAL_CREATE_TABLE, &[]).await?;
-    client.query(USER_VAL_INC, &[&user.email()]).await?;
-    Ok(json!({ "metric": 3.3 }))
+    client.execute(USER_VAL_INC, &[&user.email()]).await?;
+    let stmt = client.prepare(
+        "select value from user_value where email = $1"
+    ).await?;
+    let rows = client.query(&stmt, &[&user.email()]).await?;
+    assert_eq!(rows.len(), 1);
+    let count = rows[0].get::<_, i32>(0);
+    println!("{}", count);
+    Ok(json!({ "metric": count }))
 }
 
 #[get("/show_all_users")]
@@ -117,11 +124,12 @@ async fn main() -> anyhow::Result<()> {
         }
     });
     users.create_table().await?;
-    let app = rocket::build()
+    let _app = rocket::build()
         .mount(
             "/",
             routes![
                 index,
+                increment_user_value,
                 get_login,
                 post_signup,
                 get_signup,
