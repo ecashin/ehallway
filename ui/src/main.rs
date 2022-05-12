@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use yew::prelude::*;
 
 enum Msg {
@@ -6,6 +7,11 @@ enum Msg {
 
 struct Model {
     value: Option<i32>,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+struct UserValueMessage {
+    metric: i32,
 }
 
 impl Component for Model {
@@ -19,12 +25,12 @@ impl Component for Model {
     fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::AddOne => {
-                if let Some(value) = &mut self.value {
-                    *value += 1;
-                    true
-                } else {
-                    false
-                }
+                let msg: UserValueMessage = reqwest::blocking::get("https://localhost/inc")
+                    .unwrap()
+                    .json()
+                    .unwrap();
+                self.value = Some(msg.metric);
+                true
             }
         }
     }
