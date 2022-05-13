@@ -56,12 +56,21 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const USER_VAL_CREATE_TABLE: &str = "
-CREATE TABLE IF NOT EXISTS user_value (
-    email VARCHAR (254) UNIQUE NOT NULL primary key,
-    value integer DEFAULT 0
-);
-";
+const CREATE_TABLES: [&str; 2] = [
+    "
+    CREATE TABLE IF NOT EXISTS user_value (
+        email VARCHAR (254) UNIQUE NOT NULL primary key,
+        value integer DEFAULT 0
+    );
+    ",
+    "
+    create table if not exists user_topics (
+        email varchar (254) not null,
+        topic varchar (254) not null,
+        score integer default 0
+    )
+    ",
+];
 
 const USER_VAL_INC: &str = "
 update user_value
@@ -76,7 +85,6 @@ async fn increment_user_value(
     client: &State<sync::Arc<Client>>,
     user: User,
 ) -> Result<Value, Error> {
-    client.execute(USER_VAL_CREATE_TABLE, &[]).await?;
     client.execute(USER_VAL_INC, &[&user.email()]).await?;
     let stmt = client.prepare(
         "select value from user_value where email = $1"
@@ -124,6 +132,12 @@ async fn main() -> anyhow::Result<()> {
         }
     });
     users.create_table().await?;
+    {
+        let client = client.clone();
+        for sql in CREATE_TABLES {
+            client.execute(sql, &[]).await?;
+        }
+    }
     let _app = rocket::build()
         .mount(
             "/",
