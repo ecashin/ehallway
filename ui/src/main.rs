@@ -3,27 +3,21 @@ use yew::prelude::*;
 
 enum Msg {
     AddOne,
+    SetUserValue(i32),
 }
 
 struct Model {
     value: Option<i32>,
 }
 
-fn inc_and_fetch() -> i32 {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
+async fn inc_and_fetch() -> i32 {
+    let msg: UserValueMessage = reqwasm::http::Request::get("https://localhost/inc")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    let msg: UserValueMessage = runtime.block_on(async {
-        reqwest::Client::new()
-            .get("https://localhost/inc")
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap()
-    });
     msg.metric
 }
 
@@ -40,10 +34,15 @@ impl Component for Model {
         Self { value: None }
     }
 
-    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::AddOne => {
-                self.value = Some(inc_and_fetch());
+                ctx.link()
+                    .send_future(async { Msg::SetUserValue(inc_and_fetch().await) });
+                true
+            }
+            Msg::SetUserValue(val) => {
+                self.value = Some(val);
                 true
             }
         }
@@ -53,7 +52,7 @@ impl Component for Model {
         let user_value = if let Some(value) = self.value {
             value
         } else {
-            0
+            -1
         };
         html! {
             <div>
