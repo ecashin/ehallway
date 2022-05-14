@@ -33,8 +33,14 @@ async fn get_signup() -> Template {
 }
 
 #[post("/signup", data = "<form>")]
-async fn post_signup(auth: Auth<'_>, form: Form<Signup>) -> Result<Redirect, Error> {
+async fn post_signup(auth: Auth<'_>,
+client: &State<sync::Arc<Client>>,
+ form: Form<Signup>) -> Result<Redirect, Error> {
     auth.signup(&form).await?;
+    let login: rocket_auth::Login = form.clone().into();
+    for sql in [USER_VAL_SETUP] {
+        client.execute(sql, &[&login.email]).await?;
+    }
     auth.login(&form.into()).await?;
 
     Ok(Redirect::to("/"))
@@ -50,6 +56,7 @@ fn logout(auth: Auth<'_>) -> Result<Template, Error> {
     auth.logout()?;
     Ok(Template::render("logout", json!({})))
 }
+
 #[get("/delete")]
 async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     auth.delete().await?;
@@ -68,14 +75,19 @@ const CREATE_TABLES: [&str; 2] = [
         email varchar (254) not null,
         topic varchar (254) not null,
         score integer default 0
-    )
+    );
     ",
 ];
 
+const USER_VAL_SETUP: &str = "
+    insert into user_value (email) values ($1)
+    on conflict do nothing;
+";
+
 const USER_VAL_INC: &str = "
-update user_value
-  set value = value + 1
-where email = $1;
+    update user_value
+        set value = value + 1
+    where email = $1;
 ";
 
 use rocket::serde::json::Value;
