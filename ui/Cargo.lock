@@ -414,12 +414,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gloo-utils",
+ "js-sys",
  "reqwasm",
  "serde",
  "serde_json",
  "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "yew",
 ]
 

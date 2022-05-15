@@ -104,8 +104,28 @@ async fn increment_user_value(
     let rows = client.query(&stmt, &[&user.email()]).await?;
     assert_eq!(rows.len(), 1);
     let count = rows[0].get::<_, i32>(0);
-    println!("{}", count);
     Ok(json!({ "metric": count }))
+}
+
+#[get("/user_value")]
+async fn fetch_user_value(
+    client: &State<sync::Arc<Client>>,
+    user: User,
+) -> Result<Value, Error> {
+    let stmt = client.prepare(
+        "select value from user_value where email = $1"
+    ).await?;
+    let rows = client.query(&stmt, &[&user.email()]).await?;
+    assert_eq!(rows.len(), 1);
+    let value = rows[0].get::<_, i32>(0);
+    Ok(json!({ "metric": value }))
+}
+
+#[get("/user_id")]
+async fn get_user_id(
+    user: User,
+) -> Result<Value, Error> {
+    Ok(json!({ "email": user.email().clone() }))
 }
 
 #[get("/show_all_users")]
@@ -155,6 +175,8 @@ async fn main() -> anyhow::Result<()> {
             "/",
             routes![
                 index,
+                fetch_user_value,
+                get_user_id,
                 increment_user_value,
                 get_login,
                 post_signup,
