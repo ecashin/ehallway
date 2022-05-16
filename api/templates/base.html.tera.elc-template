@@ -9,14 +9,14 @@
 <link rel="preload" href="/index-@APPHASH@_bg.wasm" as="fetch" type="application/wasm" crossorigin="">
 <link rel="modulepreload" href="/index-@APPHASH@.js">
 
-    <title>OHiFTW</title>
+    <title>EHallway</title>
 </head>
 
 <body>
 
     <nav class="navbar navbar-expand-lg navbar-dark bg-danger">
         <div class="container-fluid">
-            <a class="navbar-brand" href="/">Most Wondrous Web</a>
+            <a class="navbar-brand" href="/">EHallway</a>
             <div>
                 {% if not user %}
                 <a class="navbar-brand" href="/login">Login</a>

@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use wasm_bindgen::prelude::JsValue;
+use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 mod js;
@@ -10,6 +11,7 @@ enum Msg {
     Noop,
     SetUserId(String),
     SetUserValue(i32),
+    UpdateNewTopicText(String),
 }
 
 enum UserIdState {
@@ -29,7 +31,8 @@ impl UserIdState {
 
 struct Model {
     user_id: UserIdState,
-    value: Option<i32>,
+    user_value: Option<i32>,
+    new_topic_text: String,
     debug: String,
 }
 
@@ -114,8 +117,9 @@ impl Component for Model {
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
             user_id: UserIdState::New,
-            value: None,
+            user_value: None,
             debug: "none".to_owned(),
+            new_topic_text: "".to_owned(),
         };
         model.fetch_user("create", ctx);
         model
@@ -151,14 +155,18 @@ impl Component for Model {
                 true
             }
             Msg::SetUserValue(val) => {
-                self.value = Some(val);
+                self.user_value = Some(val);
+                true
+            }
+            Msg::UpdateNewTopicText(text) => {
+                self.new_topic_text = text;
                 true
             }
         }
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let user_value = if let Some(value) = self.value {
+        let user_value = if let Some(value) = self.user_value {
             html! {
                 <div>
                     <p>{ value }</p>
@@ -171,7 +179,15 @@ impl Component for Model {
         let new_topic = if let UserIdState::Fetched(_uid) = &self.user_id {
             html! {
                 <div>
-                    <input id="new-topic" type="text"/>
+                    <input
+                        id="new-topic"
+                        type="text"
+                        value={self.new_topic_text.clone()}
+                        oninput={ctx.link().callback(|e: InputEvent| {
+                            let input = e.target_unchecked_into::<HtmlInputElement>();
+                            Msg::UpdateNewTopicText(input.value())
+                        })}
+                    />
                     <button onclick={ctx.link().callback(|_| Msg::AddTopic)}>{ "Add Topic" }</button>
                 </div>
             }
