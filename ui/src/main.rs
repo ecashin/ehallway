@@ -12,8 +12,23 @@ enum Msg {
     SetUserValue(i32),
 }
 
+enum UserIdState {
+    New,
+    Fetching,
+    Fetched(String),
+}
+
+impl UserIdState {
+    fn is_new(&self) -> bool {
+        match self {
+            UserIdState::New => true,
+            _ => false,
+        }
+    }
+}
+
 struct Model {
-    user_id: Option<String>,
+    user_id: UserIdState,
     value: Option<i32>,
     debug: String,
 }
@@ -26,46 +41,55 @@ async fn inc_and_fetch() -> i32 {
         .json()
         .await
         .unwrap();
-    msg.metric.unwrap()
-}
-
-async fn fetch_user_value() -> Option<i32> {
-    let msg: UserValueMessage = reqwasm::http::Request::get("https://localhost/user_value")
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
     msg.metric
 }
 
-async fn fetch_user_id() -> Option<String> {
-    let msg: UserIdMessage = reqwasm::http::Request::get("https://localhost/user_id")
+async fn fetch_user_value() -> Option<i32> {
+    let resp = reqwasm::http::Request::get("https://localhost/user_value")
         .send()
         .await
         .unwrap()
         .json()
+        .await;
+    match resp {
+        Ok(resp) => {
+            let msg: UserValueMessage = resp;
+            Some(msg.metric)
+        }
+        Err(_e) => None,
+    }
+}
+
+async fn fetch_user_id() -> Option<String> {
+    let resp = reqwasm::http::Request::get("https://localhost/user_id")
+        .send()
         .await
-        .unwrap();
-    msg.email
+        .unwrap()
+        .json()
+        .await;
+    match resp {
+        Ok(resp) => {
+            let msg: UserIdMessage = resp;
+            Some(msg.email)
+        }
+        Err(_e) => None,
+    }
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
 struct UserValueMessage {
-    metric: Option<i32>,
+    metric: i32,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
 struct UserIdMessage {
-    email: Option<String>,
+    email: String,
 }
 
-impl Component for Model {
-    type Message = Msg;
-    type Properties = ();
-
-    fn create(ctx: &Context<Self>) -> Self {
+impl Model {
+    fn fetch_user(&mut self, tag: &str, ctx: &Context<Self>) {
+        self.user_id = UserIdState::Fetching;
+        js::console_log(JsValue::from(format!("fetch_user in {}", tag)));
         ctx.link().send_future(async {
             if let Some(uid) = fetch_user_id().await {
                 Msg::SetUserId(uid)
@@ -80,14 +104,27 @@ impl Component for Model {
                 Msg::Noop
             }
         });
-        Self {
-            user_id: None,
+    }
+}
+
+impl Component for Model {
+    type Message = Msg;
+    type Properties = ();
+
+    fn create(ctx: &Context<Self>) -> Self {
+        let mut model = Self {
+            user_id: UserIdState::New,
             value: None,
             debug: "none".to_owned(),
-        }
+        };
+        model.fetch_user("create", ctx);
+        model
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        if self.user_id.is_new() {
+            self.fetch_user("update", ctx);
+        }
         match msg {
             Msg::AddOne => {
                 ctx.link()
@@ -110,7 +147,7 @@ impl Component for Model {
             Msg::SetUserId(email) => {
                 let msg = format!("got email: {}", &email);
                 js::console_log(JsValue::from(msg));
-                self.user_id = Some(email);
+                self.user_id = UserIdState::Fetched(email);
                 true
             }
             Msg::SetUserValue(val) => {
@@ -131,7 +168,7 @@ impl Component for Model {
         } else {
             html! {}
         };
-        let new_topic = if let Some(_uid) = &self.user_id {
+        let new_topic = if let UserIdState::Fetched(_uid) = &self.user_id {
             html! {
                 <div>
                     <input id="new-topic" type="text"/>

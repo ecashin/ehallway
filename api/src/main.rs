@@ -108,7 +108,7 @@ async fn increment_user_value(
     Ok(json!({ "metric": count }))
 }
 
-#[get("/user_value", rank = 1)]
+#[get("/user_value")]
 async fn get_user_value(user: User, client: &State<sync::Arc<Client>>) -> Value {
     let stmt = client
         .prepare("select value from user_value where email = $1")
@@ -120,21 +120,9 @@ async fn get_user_value(user: User, client: &State<sync::Arc<Client>>) -> Value 
     json!({ "metric": value })
 }
 
-#[get("/user_value", rank = 2)]
-async fn get_user_value_nouser(_client: &State<sync::Arc<Client>>) -> Value {
-    let value: Option<i32> = None;
-    json!({ "metric": value })
-}
-
-#[get("/user_id", rank = 1)]
+#[get("/user_id")]
 async fn get_user_id(user: User) -> Value {
     json!({ "email": user.email().clone() })
-}
-
-#[get("/user_id", rank = 2)]
-async fn get_user_id_nouser() -> Value {
-    let value: Option<String> = None;
-    json!({ "email": value })
 }
 
 #[get("/show_all_users")]
@@ -185,9 +173,7 @@ async fn main() -> anyhow::Result<()> {
             routes![
                 index,
                 get_user_value,
-                get_user_value_nouser,
                 get_user_id,
-                get_user_id_nouser,
                 increment_user_value,
                 get_login,
                 post_signup,
