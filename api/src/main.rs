@@ -1,6 +1,7 @@
 use clap::Parser;
 use rocket::fs::FileServer;
 use rocket::{form::*, get, post, response::Redirect, routes, State};
+use rocket::serde::json::Value;
 use rocket_auth::{prelude::Error, *};
 use rocket_dyn_templates::Template;
 use serde_json::json;
@@ -33,9 +34,11 @@ async fn get_signup() -> Template {
 }
 
 #[post("/signup", data = "<form>")]
-async fn post_signup(auth: Auth<'_>,
-client: &State<sync::Arc<Client>>,
- form: Form<Signup>) -> Result<Redirect, Error> {
+async fn post_signup(
+    auth: Auth<'_>,
+    client: &State<sync::Arc<Client>>,
+    form: Form<Signup>,
+) -> Result<Redirect, Error> {
     auth.signup(&form).await?;
     let login: rocket_auth::Login = form.clone().into();
     for sql in [USER_VAL_SETUP] {
@@ -90,42 +93,48 @@ const USER_VAL_INC: &str = "
     where email = $1;
 ";
 
-use rocket::serde::json::Value;
-
 #[get("/inc")]
 async fn increment_user_value(
     client: &State<sync::Arc<Client>>,
     user: User,
 ) -> Result<Value, Error> {
     client.execute(USER_VAL_INC, &[&user.email()]).await?;
-    let stmt = client.prepare(
-        "select value from user_value where email = $1"
-    ).await?;
+    let stmt = client
+        .prepare("select value from user_value where email = $1")
+        .await?;
     let rows = client.query(&stmt, &[&user.email()]).await?;
     assert_eq!(rows.len(), 1);
     let count = rows[0].get::<_, i32>(0);
     Ok(json!({ "metric": count }))
 }
 
-#[get("/user_value")]
-async fn fetch_user_value(
-    client: &State<sync::Arc<Client>>,
-    user: User,
-) -> Result<Value, Error> {
-    let stmt = client.prepare(
-        "select value from user_value where email = $1"
-    ).await?;
-    let rows = client.query(&stmt, &[&user.email()]).await?;
+#[get("/user_value", rank = 1)]
+async fn get_user_value(user: User, client: &State<sync::Arc<Client>>) -> Value {
+    let stmt = client
+        .prepare("select value from user_value where email = $1")
+        .await
+        .unwrap();
+    let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
     assert_eq!(rows.len(), 1);
     let value = rows[0].get::<_, i32>(0);
-    Ok(json!({ "metric": value }))
+    json!({ "metric": value })
 }
 
-#[get("/user_id")]
-async fn get_user_id(
-    user: User,
-) -> Result<Value, Error> {
-    Ok(json!({ "email": user.email().clone() }))
+#[get("/user_value", rank = 2)]
+async fn get_user_value_nouser(_client: &State<sync::Arc<Client>>) -> Value {
+    let value: Option<i32> = None;
+    json!({ "metric": value })
+}
+
+#[get("/user_id", rank = 1)]
+async fn get_user_id(user: User) -> Value {
+    json!({ "email": user.email().clone() })
+}
+
+#[get("/user_id", rank = 2)]
+async fn get_user_id_nouser() -> Value {
+    let value: Option<String> = None;
+    json!({ "email": value })
 }
 
 #[get("/show_all_users")]
@@ -175,8 +184,10 @@ async fn main() -> anyhow::Result<()> {
             "/",
             routes![
                 index,
-                fetch_user_value,
+                get_user_value,
+                get_user_value_nouser,
                 get_user_id,
+                get_user_id_nouser,
                 increment_user_value,
                 get_login,
                 post_signup,

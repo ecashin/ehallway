@@ -7,6 +7,7 @@ mod js;
 enum Msg {
     AddOne,
     AddTopic,
+    Noop,
     SetUserId(String),
     SetUserValue(i32),
 }
@@ -25,10 +26,10 @@ async fn inc_and_fetch() -> i32 {
         .json()
         .await
         .unwrap();
-    msg.metric
+    msg.metric.unwrap()
 }
 
-async fn fetch_user_value() -> i32 {
+async fn fetch_user_value() -> Option<i32> {
     let msg: UserValueMessage = reqwasm::http::Request::get("https://localhost/user_value")
         .send()
         .await
@@ -39,7 +40,7 @@ async fn fetch_user_value() -> i32 {
     msg.metric
 }
 
-async fn fetch_user_id() -> String {
+async fn fetch_user_id() -> Option<String> {
     let msg: UserIdMessage = reqwasm::http::Request::get("https://localhost/user_id")
         .send()
         .await
@@ -52,12 +53,12 @@ async fn fetch_user_id() -> String {
 
 #[derive(Clone, Deserialize, PartialEq)]
 struct UserValueMessage {
-    metric: i32,
+    metric: Option<i32>,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
 struct UserIdMessage {
-    email: String,
+    email: Option<String>,
 }
 
 impl Component for Model {
@@ -65,10 +66,20 @@ impl Component for Model {
     type Properties = ();
 
     fn create(ctx: &Context<Self>) -> Self {
-        ctx.link()
-            .send_future(async { Msg::SetUserId(fetch_user_id().await) });
-        ctx.link()
-            .send_future(async { Msg::SetUserValue(fetch_user_value().await) });
+        ctx.link().send_future(async {
+            if let Some(uid) = fetch_user_id().await {
+                Msg::SetUserId(uid)
+            } else {
+                Msg::Noop
+            }
+        });
+        ctx.link().send_future(async {
+            if let Some(val) = fetch_user_value().await {
+                Msg::SetUserValue(val)
+            } else {
+                Msg::Noop
+            }
+        });
         Self {
             user_id: None,
             value: None,
@@ -95,6 +106,7 @@ impl Component for Model {
                 js::console_log(JsValue::from(text));
                 true
             }
+            Msg::Noop => true,
             Msg::SetUserId(email) => {
                 let msg = format!("got email: {}", &email);
                 js::console_log(JsValue::from(msg));
