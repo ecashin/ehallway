@@ -10,6 +10,7 @@ mod js;
 enum Msg {
     AddOne,
     AddTopic,
+    AddedTopic,
     LogError(Result<()>),
     Noop,
     SetUserId(String),
@@ -87,19 +88,16 @@ struct NewTopic {
     new_topic: String,
 }
 
-async fn add_new_topic(topic_text: String) -> Result<()> {
+async fn add_new_topic(topic_text: String) -> Result<http::Response> {
     let topic = NewTopic {
         new_topic: topic_text,
     };
-    let resp = gloo_net::http::Request::post("https://localhost/add-new-topic")
-        .json(&topic)?
-        .send()
-        .await?;
-    if resp.status() == 200 {
-        Ok(())
-    } else {
-        Err(anyhow!("status {}: {}", resp.status(), resp.status_text()))
-    }
+    Ok(
+        gloo_net::http::Request::post("https://localhost/add-new-topic")
+            .json(&topic)?
+            .send()
+            .await?,
+    )
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -158,10 +156,28 @@ impl Component for Model {
                     .send_future(async { Msg::SetUserValue(inc_and_fetch().await) });
                 true
             }
+            Msg::AddedTopic => {
+                self.new_topic_text = "".to_owned();
+                true
+            }
             Msg::AddTopic => {
                 let topic_text = self.new_topic_text.clone();
-                ctx.link()
-                    .send_future(async { Msg::LogError(add_new_topic(topic_text).await) });
+                ctx.link().send_future(async {
+                    match add_new_topic(topic_text).await {
+                        Ok(resp) => {
+                            if resp.status() == 200 {
+                                Msg::AddedTopic
+                            } else {
+                                Msg::LogError(Err(anyhow!(
+                                    "response status {}: {}",
+                                    resp.status(),
+                                    resp.status_text()
+                                )))
+                            }
+                        }
+                        Err(e) => Msg::LogError(Err(e)),
+                    }
+                });
                 true
             }
             Msg::LogError(result) => {
