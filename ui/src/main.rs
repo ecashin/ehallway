@@ -1,4 +1,6 @@
-use serde::Deserialize;
+use anyhow::{anyhow, Result};
+use gloo_net::http;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::JsValue;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
@@ -8,6 +10,7 @@ mod js;
 enum Msg {
     AddOne,
     AddTopic,
+    LogError(Result<()>),
     Noop,
     SetUserId(String),
     SetUserValue(i32),
@@ -37,7 +40,7 @@ struct Model {
 }
 
 async fn inc_and_fetch() -> i32 {
-    let msg: UserValueMessage = reqwasm::http::Request::get("https://localhost/inc")
+    let msg: UserValueMessage = http::Request::get("https://localhost/inc")
         .send()
         .await
         .unwrap()
@@ -48,7 +51,7 @@ async fn inc_and_fetch() -> i32 {
 }
 
 async fn fetch_user_value() -> Option<i32> {
-    let resp = reqwasm::http::Request::get("https://localhost/user_value")
+    let resp = http::Request::get("https://localhost/user_value")
         .send()
         .await
         .unwrap()
@@ -64,7 +67,7 @@ async fn fetch_user_value() -> Option<i32> {
 }
 
 async fn fetch_user_id() -> Option<String> {
-    let resp = reqwasm::http::Request::get("https://localhost/user_id")
+    let resp = http::Request::get("https://localhost/user_id")
         .send()
         .await
         .unwrap()
@@ -76,6 +79,26 @@ async fn fetch_user_id() -> Option<String> {
             Some(msg.email)
         }
         Err(_e) => None,
+    }
+}
+
+#[derive(Serialize)]
+struct NewTopic {
+    new_topic: String,
+}
+
+async fn add_new_topic(topic_text: String) -> Result<()> {
+    let topic = NewTopic {
+        new_topic: topic_text,
+    };
+    let resp = gloo_net::http::Request::post("https://localhost/add-new-topic")
+        .json(&topic)?
+        .send()
+        .await?;
+    if resp.status() == 200 {
+        Ok(())
+    } else {
+        Err(anyhow!("status {}: {}", resp.status(), resp.status_text()))
     }
 }
 
@@ -136,15 +159,15 @@ impl Component for Model {
                 true
             }
             Msg::AddTopic => {
-                let text = web_sys::window()
-                    .unwrap()
-                    .document()
-                    .unwrap()
-                    .get_element_by_id("new-topic")
-                    .unwrap()
-                    .first_child();
-                self.debug = format!("{:?}", text);
-                js::console_log(JsValue::from(text));
+                let topic_text = self.new_topic_text.clone();
+                ctx.link()
+                    .send_future(async { Msg::LogError(add_new_topic(topic_text).await) });
+                true
+            }
+            Msg::LogError(result) => {
+                if let Err(e) = result {
+                    js::console_log(JsValue::from(format!("{e}")));
+                }
                 true
             }
             Msg::Noop => true,
