@@ -148,6 +148,17 @@ async fn get_user_value(user: User, client: &State<sync::Arc<Client>>) -> Value 
     json!({ "metric": value })
 }
 
+#[get("/user_topics")]
+async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Value {
+    let stmt = client
+        .prepare("select topic from user_topics where email = $1")
+        .await
+        .unwrap();
+    let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
+    let topics: Vec<_> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
+    json!({ "topics": topics })
+}
+
 #[get("/user_id")]
 async fn get_user_id(user: User) -> Value {
     json!({ "email": user.email().clone() })
@@ -201,6 +212,7 @@ async fn main() -> anyhow::Result<()> {
             routes![
                 index,
                 add_new_topic,
+                get_user_topics,
                 get_user_value,
                 get_user_id,
                 increment_user_value,

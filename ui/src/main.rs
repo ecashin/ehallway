@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Error, Result};
 use gloo_net::http;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::JsValue;
@@ -11,9 +11,10 @@ enum Msg {
     AddOne,
     AddTopic,
     AddedTopic,
-    LogError(Result<()>),
+    LogError(Error),
     Noop,
     SetUserId(String),
+    SetUserTopics(Vec<String>),
     SetUserValue(i32),
     UpdateNewTopicText(String),
 }
@@ -34,10 +35,11 @@ impl UserIdState {
 }
 
 struct Model {
-    user_id: UserIdState,
-    user_value: Option<i32>,
-    new_topic_text: String,
     debug: String,
+    new_topic_text: String,
+    user_id: UserIdState,
+    user_topics: Vec<String>,
+    user_value: Option<i32>,
 }
 
 async fn inc_and_fetch() -> i32 {
@@ -80,6 +82,30 @@ async fn fetch_user_id() -> Option<String> {
             Some(msg.email)
         }
         Err(_e) => None,
+    }
+}
+
+fn error_from_response(resp: http::Response) -> Error {
+    let status = resp.status();
+    assert_ne!(status, 200);
+    anyhow!("response status {status}: {}", resp.status_text())
+}
+
+#[derive(Deserialize)]
+struct UserTopicsMessage {
+    topics: Vec<String>,
+}
+
+async fn fetch_user_topics() -> Result<Vec<String>> {
+    let resp: std::result::Result<UserTopicsMessage, gloo_net::Error> =
+        http::Request::get("https://localhost/user_topics")
+            .send()
+            .await?
+            .json()
+            .await;
+    match resp {
+        Ok(msg) => Ok(msg.topics),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -137,10 +163,11 @@ impl Component for Model {
 
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
-            user_id: UserIdState::New,
-            user_value: None,
             debug: "none".to_owned(),
             new_topic_text: "".to_owned(),
+            user_id: UserIdState::New,
+            user_topics: vec![],
+            user_value: None,
         };
         model.fetch_user("create", ctx);
         model
@@ -158,6 +185,12 @@ impl Component for Model {
             }
             Msg::AddedTopic => {
                 self.new_topic_text = "".to_owned();
+                ctx.link().send_future(async {
+                    match fetch_user_topics().await {
+                        Ok(topics) => Msg::SetUserTopics(topics),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
                 true
             }
             Msg::AddTopic => {
@@ -168,22 +201,16 @@ impl Component for Model {
                             if resp.status() == 200 {
                                 Msg::AddedTopic
                             } else {
-                                Msg::LogError(Err(anyhow!(
-                                    "response status {}: {}",
-                                    resp.status(),
-                                    resp.status_text()
-                                )))
+                                Msg::LogError(error_from_response(resp))
                             }
                         }
-                        Err(e) => Msg::LogError(Err(e)),
+                        Err(e) => Msg::LogError(e),
                     }
                 });
                 true
             }
-            Msg::LogError(result) => {
-                if let Err(e) = result {
-                    js::console_log(JsValue::from(format!("{e}")));
-                }
+            Msg::LogError(e) => {
+                js::console_log(JsValue::from(format!("{e}")));
                 true
             }
             Msg::Noop => true,
@@ -191,6 +218,10 @@ impl Component for Model {
                 let msg = format!("got email: {}", &email);
                 js::console_log(JsValue::from(msg));
                 self.user_id = UserIdState::Fetched(email);
+                true
+            }
+            Msg::SetUserTopics(topics) => {
+                self.user_topics = topics;
                 true
             }
             Msg::SetUserValue(val) => {
@@ -233,11 +264,21 @@ impl Component for Model {
         } else {
             html! {}
         };
+        let topics: Vec<_> = self
+            .user_topics
+            .iter()
+            .map(|topic| {
+                html! {
+                    <li>{ topic }</li>
+                }
+            })
+            .collect();
         html! {
             <div>
                 { user_value }
                 { new_topic }
                 <p>{ &self.debug }</p>
+                <ul>{ topics }</ul>
             </div>
         }
     }
