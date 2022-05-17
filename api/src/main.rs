@@ -1,7 +1,12 @@
+use std::borrow::Cow;
+
 use clap::Parser;
 use rocket::fs::FileServer;
+use rocket::serde::{
+    json::{Json, Value},
+    {Deserialize, Serialize},
+};
 use rocket::{form::*, get, post, response::Redirect, routes, State};
-use rocket::serde::json::Value;
 use rocket_auth::{prelude::Error, *};
 use rocket_dyn_templates::Template;
 use serde_json::json;
@@ -93,6 +98,29 @@ const USER_VAL_INC: &str = "
     where email = $1;
 ";
 
+const NEW_TOPIC: &str = "
+    insert into user_topics (email, topic)
+    values ($1, $2);
+";
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct NewTopic<'r> {
+    new_topic: Cow<'r, str>,
+}
+
+#[post("/add-new-topic", data = "<topic>", format = "json")]
+async fn add_new_topic(
+    client: &State<sync::Arc<Client>>,
+    user: User,
+    topic: Json<NewTopic<'_>>,
+) -> Result<Value, Error> {
+    client
+        .execute(NEW_TOPIC, &[&user.email(), &topic.new_topic])
+        .await?;
+    Ok(json!({"inserted": true}))
+}
+
 #[get("/inc")]
 async fn increment_user_value(
     client: &State<sync::Arc<Client>>,
@@ -172,6 +200,7 @@ async fn main() -> anyhow::Result<()> {
             "/",
             routes![
                 index,
+                add_new_topic,
                 get_user_value,
                 get_user_id,
                 increment_user_value,
