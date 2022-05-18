@@ -82,6 +82,7 @@ const CREATE_TABLES: [&str; 2] = [
     create table if not exists user_topics (
         email varchar (254) not null,
         topic varchar (254) not null,
+        id bigserial primary key,
         score integer default 0
     );
     ",
