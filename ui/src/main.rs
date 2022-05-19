@@ -37,12 +37,19 @@ impl UserIdState {
     }
 }
 
+#[derive(PartialEq)]
+enum Tab {
+    TopicManagment,
+    MeetingPrep,
+}
+
 struct Model {
     debug: String,
     new_topic_text: String,
     user_id: UserIdState,
     user_topics: Vec<UserTopic>,
     user_value: Option<i32>,
+    active_tab: Tab,
 }
 
 async fn inc_and_fetch() -> i32 {
@@ -177,6 +184,26 @@ impl Model {
             }
         });
     }
+
+    fn tabs_html(&self, ctx: &Context<Self>) -> Html {
+        let item_class = |tag| {
+            if self.active_tab == tag {
+                "nav-item"
+            } else {
+                "nav-item active"
+            }
+        };
+        html! {
+            <ul class="nav nav-tabs">
+                <li class={ item_class(Tab::TopicManagment) }>
+                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::AddOne)}>{ "Topics" }</a>
+                </li>
+                <li class={ item_class(Tab::MeetingPrep) }>
+                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::AddOne)}>{ "Meet" }</a>
+                </li>
+            </ul>
+        }
+    }
 }
 
 impl Component for Model {
@@ -190,6 +217,7 @@ impl Component for Model {
             user_id: UserIdState::New,
             user_topics: vec![],
             user_value: None,
+            active_tab: Tab::TopicManagment,
         };
         model.fetch_user("create", ctx);
         model
@@ -314,6 +342,7 @@ impl Component for Model {
             .collect();
         html! {
             <div>
+                { self.tabs_html(ctx) }
                 { user_value }
                 { new_topic }
                 <p>{ &self.debug }</p>
