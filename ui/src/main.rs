@@ -16,6 +16,7 @@ enum Msg {
     DeleteTopic(u32),
     LogError(Error),
     Noop,
+    SetTab(Tab),
     SetUserId(String),
     SetUserTopics(Vec<UserTopic>),
     SetUserValue(i32),
@@ -196,10 +197,10 @@ impl Model {
         html! {
             <ul class="nav nav-tabs">
                 <li class={ item_class(Tab::TopicManagment) }>
-                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::AddOne)}>{ "Topics" }</a>
+                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::TopicManagment))}>{ "Topics" }</a>
                 </li>
                 <li class={ item_class(Tab::MeetingPrep) }>
-                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::AddOne)}>{ "Meet" }</a>
+                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingPrep))}>{ "Meet" }</a>
                 </li>
             </ul>
         }
@@ -274,6 +275,10 @@ impl Component for Model {
                 true
             }
             Msg::Noop => true,
+            Msg::SetTab(tab) => {
+                self.active_tab = tab;
+                true
+            }
             Msg::SetUserId(email) => {
                 let msg = format!("got email: {}", &email);
                 js::console_log(JsValue::from(msg));
@@ -344,9 +349,19 @@ impl Component for Model {
             <div>
                 { self.tabs_html(ctx) }
                 { user_value }
-                { new_topic }
+                {
+                    if self.active_tab == Tab::TopicManagment {
+                        html! {
+                            <div>
+                                { new_topic }
+                                <table>{ topics }</table>
+                            </div>
+                        }
+                    } else {
+                        html!{}
+                    }
+                }
                 <p>{ &self.debug }</p>
-                <table>{ topics }</table>
             </div>
         }
     }
