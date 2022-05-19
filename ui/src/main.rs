@@ -169,6 +169,13 @@ impl Model {
                 Msg::Noop
             }
         });
+        ctx.link().send_future(async {
+            if let Ok(topics) = fetch_user_topics().await {
+                Msg::SetUserTopics(topics)
+            } else {
+                Msg::Noop
+            }
+        });
     }
 }
 
