@@ -311,6 +311,9 @@ impl Component for Model {
         } else {
             html! {}
         };
+        let onkeypress = ctx
+            .link()
+            .batch_callback(move |e: KeyboardEvent| (e.key() == "Enter").then(|| Msg::AddTopic));
         let new_topic = if let UserIdState::Fetched(_uid) = &self.user_id {
             html! {
                 <div>
@@ -318,9 +321,10 @@ impl Component for Model {
                         id="new-topic"
                         type="text"
                         value={self.new_topic_text.clone()}
+                        { onkeypress }
                         oninput={ctx.link().callback(|e: InputEvent| {
-                            let input = e.target_unchecked_into::<HtmlInputElement>();
-                            Msg::UpdateNewTopicText(input.value())
+                                let input = e.target_unchecked_into::<HtmlInputElement>();
+                                Msg::UpdateNewTopicText(input.value())
                         })}
                     />
                     <button onclick={ctx.link().callback(|_| Msg::AddTopic)}>{ "Add Topic" }</button>
