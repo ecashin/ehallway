@@ -6,7 +6,7 @@ use rocket::serde::{
     json::{Json, Value},
     {Deserialize, Serialize},
 };
-use rocket::{form::*, get, post, response::Redirect, routes, State};
+use rocket::{delete, form::*, get, post, response::Redirect, routes, State};
 use rocket_auth::{prelude::Error, *};
 use rocket_dyn_templates::Template;
 use serde_json::json;
@@ -149,14 +149,35 @@ async fn get_user_value(user: User, client: &State<sync::Arc<Client>>) -> Value 
     json!({ "metric": value })
 }
 
+#[delete("/topics/<id>")]
+async fn delete_topic(user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
+    let identifier = id as i64;
+    client
+        .execute(
+            "delete from user_topics where id = $1 and email = $2",
+            &[&identifier, &user.email()],
+        )
+        .await
+        .unwrap();
+    json!({ "deleted": id })
+}
+
 #[get("/user_topics")]
 async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Value {
     let stmt = client
-        .prepare("select topic from user_topics where email = $1")
+        .prepare("select topic, id from user_topics where email = $1")
         .await
         .unwrap();
     let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
-    let topics: Vec<_> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
+    let topics: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let text = row.get::<_, String>(0);
+            let id = row.get::<_, i64>(1);
+            assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
+            (text, id as u32)
+        })
+        .collect();
     json!({ "topics": topics })
 }
 
@@ -213,6 +234,7 @@ async fn main() -> anyhow::Result<()> {
             routes![
                 index,
                 add_new_topic,
+                delete_topic,
                 get_user_topics,
                 get_user_value,
                 get_user_id,

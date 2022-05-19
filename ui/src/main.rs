@@ -1,3 +1,5 @@
+use std::boxed;
+
 use anyhow::{anyhow, Error, Result};
 use gloo_net::http;
 use serde::{Deserialize, Serialize};
@@ -11,10 +13,11 @@ enum Msg {
     AddOne,
     AddTopic,
     AddedTopic,
+    DeleteTopic(u32),
     LogError(Error),
     Noop,
     SetUserId(String),
-    SetUserTopics(Vec<String>),
+    SetUserTopics(Vec<UserTopic>),
     SetUserValue(i32),
     UpdateNewTopicText(String),
 }
@@ -38,7 +41,7 @@ struct Model {
     debug: String,
     new_topic_text: String,
     user_id: UserIdState,
-    user_topics: Vec<String>,
+    user_topics: Vec<UserTopic>,
     user_value: Option<i32>,
 }
 
@@ -92,11 +95,17 @@ fn error_from_response(resp: http::Response) -> Error {
 }
 
 #[derive(Deserialize)]
-struct UserTopicsMessage {
-    topics: Vec<String>,
+struct UserTopic {
+    text: String,
+    id: u32,
 }
 
-async fn fetch_user_topics() -> Result<Vec<String>> {
+#[derive(Deserialize)]
+struct UserTopicsMessage {
+    topics: Vec<UserTopic>,
+}
+
+async fn fetch_user_topics() -> Result<Vec<UserTopic>> {
     let resp: std::result::Result<UserTopicsMessage, gloo_net::Error> =
         http::Request::get("https://localhost/user_topics")
             .send()
@@ -112,6 +121,12 @@ async fn fetch_user_topics() -> Result<Vec<String>> {
 #[derive(Serialize)]
 struct NewTopic {
     new_topic: String,
+}
+
+async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
+    let url = format!("https://localhost/topics/{}", id);
+    gloo_net::http::Request::delete(&url).send().await?;
+    Ok(())
 }
 
 async fn add_new_topic(topic_text: String) -> Result<http::Response> {
@@ -209,6 +224,16 @@ impl Component for Model {
                 });
                 true
             }
+            Msg::DeleteTopic(id) => {
+                let id = boxed::Box::new(id);
+                ctx.link().send_future(async {
+                    match delete_topic(id).await {
+                        Ok(_) => Msg::AddedTopic,
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
             Msg::LogError(e) => {
                 js::console_log(JsValue::from(format!("{e}")));
                 true
@@ -268,8 +293,15 @@ impl Component for Model {
             .user_topics
             .iter()
             .map(|topic| {
+                let text = topic.text.clone();
+                let id = topic.id;
                 html! {
-                    <li>{ topic }</li>
+                    <tr>
+                        <td>{ text }</td>
+                        <td>
+                            <button onclick={ctx.link().callback(move |_| Msg::DeleteTopic(id))}>{"DELETE"}</button>
+                        </td>
+                    </tr>
                 }
             })
             .collect();
@@ -278,7 +310,7 @@ impl Component for Model {
                 { user_value }
                 { new_topic }
                 <p>{ &self.debug }</p>
-                <ul>{ topics }</ul>
+                <table>{ topics }</table>
             </div>
         }
     }
