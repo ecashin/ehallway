@@ -46,9 +46,7 @@ async fn post_signup(
 ) -> Result<Redirect, Error> {
     auth.signup(&form).await?;
     let login: rocket_auth::Login = form.clone().into();
-    for sql in [USER_VAL_SETUP] {
-        client.execute(sql, &[&login.email]).await?;
-    }
+    client.execute(USER_VAL_SETUP, &[&login.email]).await?;
     auth.login(&form.into()).await?;
 
     Ok(Redirect::to("/"))
@@ -71,7 +69,7 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_TABLES: [&str; 2] = [
+const CREATE_TABLES: [&str; 4] = [
     "
     CREATE TABLE IF NOT EXISTS user_value (
         email VARCHAR (254) UNIQUE NOT NULL primary key,
@@ -84,6 +82,18 @@ const CREATE_TABLES: [&str; 2] = [
         topic varchar (254) not null,
         id bigserial primary key,
         score integer default 0
+    );
+    ",
+    "
+    create table if not exists meetings (
+        name varchar (254) not null,
+        id bigserial primary key
+    );
+    ",
+    "
+    create table if not exists meeting_participants (
+        meeting bigint not null,
+        email varchar (254) not null
     );
     ",
 ];
@@ -99,6 +109,17 @@ const USER_VAL_INC: &str = "
     where email = $1;
 ";
 
+const NEW_MEETING: &str = "
+    insert into meetings (name)
+    values ($1);
+";
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct NewMeeting<'r> {
+    name: Cow<'r, str>,
+}
+
 const NEW_TOPIC: &str = "
     insert into user_topics (email, topic)
     values ($1, $2);
@@ -110,7 +131,17 @@ struct NewTopic<'r> {
     new_topic: Cow<'r, str>,
 }
 
-#[post("/add-new-topic", data = "<topic>", format = "json")]
+#[post("/meetings", data = "<meeting>", format = "json")]
+async fn add_new_meeting(
+    client: &State<sync::Arc<Client>>,
+    _user: User,
+    meeting: Json<NewMeeting<'_>>,
+) -> Result<Value, Error> {
+    client.execute(NEW_MEETING, &[&meeting.name]).await?;
+    Ok(json!({"inserted": true}))
+}
+
+#[post("/topics", data = "<topic>", format = "json")]
 async fn add_new_topic(
     client: &State<sync::Arc<Client>>,
     user: User,
@@ -149,6 +180,16 @@ async fn get_user_value(user: User, client: &State<sync::Arc<Client>>) -> Value 
     json!({ "metric": value })
 }
 
+#[delete("/meetings/<id>")]
+async fn delete_meeting(_user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
+    let identifier = id as i64;
+    client
+        .execute("delete from meetings where id = $1", &[&identifier])
+        .await
+        .unwrap();
+    json!({ "deleted": id })
+}
+
 #[delete("/topics/<id>")]
 async fn delete_topic(user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
     let identifier = id as i64;
@@ -160,6 +201,25 @@ async fn delete_topic(user: User, client: &State<sync::Arc<Client>>, id: u32) ->
         .await
         .unwrap();
     json!({ "deleted": id })
+}
+
+#[get("/meetings")]
+async fn get_meetings(_user: User, client: &State<sync::Arc<Client>>) -> Value {
+    let stmt = client
+        .prepare("select name, id from meetings")
+        .await
+        .unwrap();
+    let rows = client.query(&stmt, &[]).await.unwrap();
+    let meetings: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let name = row.get::<_, String>(0);
+            let id = row.get::<_, i64>(1);
+            assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
+            (name, id as u32)
+        })
+        .collect();
+    json!({ "meetings": meetings })
 }
 
 #[get("/user_topics")]
@@ -183,7 +243,7 @@ async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Value
 
 #[get("/user_id")]
 async fn get_user_id(user: User) -> Value {
-    json!({ "email": user.email().clone() })
+    json!({ "email": &(*user.email()) })
 }
 
 #[get("/show_all_users")]
@@ -195,8 +255,7 @@ async fn show_all_users(
         .query("select * from users;", &[])
         .await?
         .into_iter()
-        .map(TryInto::try_into)
-        .flatten()
+        .flat_map(TryInto::try_into)
         .collect();
 
     Ok(Template::render(
@@ -233,8 +292,11 @@ async fn main() -> anyhow::Result<()> {
             "/",
             routes![
                 index,
+                add_new_meeting,
                 add_new_topic,
+                delete_meeting,
                 delete_topic,
+                get_meetings,
                 get_user_topics,
                 get_user_value,
                 get_user_id,

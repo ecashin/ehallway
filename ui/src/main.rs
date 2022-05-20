@@ -10,16 +10,21 @@ use yew::prelude::*;
 mod js;
 
 enum Msg {
+    AddMeeting,
     AddOne,
     AddTopic,
+    AddedMeeting,
     AddedTopic,
+    DeleteMeeting(u32),
     DeleteTopic(u32),
     LogError(Error),
     Noop,
+    SetMeetings(Vec<Meeting>),
     SetTab(Tab),
     SetUserId(String),
     SetUserTopics(Vec<UserTopic>),
     SetUserValue(i32),
+    UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
 }
 
@@ -40,12 +45,15 @@ impl UserIdState {
 
 #[derive(PartialEq)]
 enum Tab {
-    TopicManagment,
+    MeetingManagement,
     MeetingPrep,
+    TopicManagment,
 }
 
 struct Model {
     debug: String,
+    meetings: Vec<Meeting>,
+    new_meeting_text: String,
     new_topic_text: String,
     user_id: UserIdState,
     user_topics: Vec<UserTopic>,
@@ -103,14 +111,38 @@ fn error_from_response(resp: http::Response) -> Error {
 }
 
 #[derive(Deserialize)]
+struct Meeting {
+    name: String,
+    id: u32,
+}
+
+#[derive(Deserialize)]
 struct UserTopic {
     text: String,
     id: u32,
 }
 
 #[derive(Deserialize)]
+struct MeetingsMessage {
+    meetings: Vec<Meeting>,
+}
+
+#[derive(Deserialize)]
 struct UserTopicsMessage {
     topics: Vec<UserTopic>,
+}
+
+async fn fetch_meetings() -> Result<Vec<Meeting>> {
+    let resp: std::result::Result<MeetingsMessage, gloo_net::Error> =
+        http::Request::get("https://localhost/meetings")
+            .send()
+            .await?
+            .json()
+            .await;
+    match resp {
+        Ok(msg) => Ok(msg.meetings),
+        Err(e) => Err(e.into()),
+    }
 }
 
 async fn fetch_user_topics() -> Result<Vec<UserTopic>> {
@@ -127,8 +159,19 @@ async fn fetch_user_topics() -> Result<Vec<UserTopic>> {
 }
 
 #[derive(Serialize)]
+struct NewMeeting {
+    name: String,
+}
+
+#[derive(Serialize)]
 struct NewTopic {
     new_topic: String,
+}
+
+async fn delete_meeting(id: boxed::Box<u32>) -> Result<()> {
+    let url = format!("https://localhost/meetings/{}", id);
+    gloo_net::http::Request::delete(&url).send().await?;
+    Ok(())
 }
 
 async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
@@ -137,16 +180,22 @@ async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
     Ok(())
 }
 
+async fn add_new_meeting(name: String) -> Result<http::Response> {
+    let new_meeting = NewMeeting { name };
+    Ok(gloo_net::http::Request::post("https://localhost/meetings")
+        .json(&new_meeting)?
+        .send()
+        .await?)
+}
+
 async fn add_new_topic(topic_text: String) -> Result<http::Response> {
     let topic = NewTopic {
         new_topic: topic_text,
     };
-    Ok(
-        gloo_net::http::Request::post("https://localhost/add-new-topic")
-            .json(&topic)?
-            .send()
-            .await?,
-    )
+    Ok(gloo_net::http::Request::post("https://localhost/topics")
+        .json(&topic)?
+        .send()
+        .await?)
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -186,6 +235,57 @@ impl Model {
         });
     }
 
+    fn meeting_management_html(&self, ctx: &Context<Self>) -> Html {
+        let onkeypress = ctx
+            .link()
+            .batch_callback(move |e: KeyboardEvent| (e.key() == "Enter").then(|| Msg::AddMeeting));
+
+        let new_meeting = if let UserIdState::Fetched(_uid) = &self.user_id {
+            html! {
+                <div>
+                    <input
+                        id="new-meeting"
+                        type="text"
+                        value={self.new_meeting_text.clone()}
+                        { onkeypress }
+                        oninput={ctx.link().callback(|e: InputEvent| {
+                                let input = e.target_unchecked_into::<HtmlInputElement>();
+                                Msg::UpdateNewMeetingText(input.value())
+                        })}
+                    />
+                    <button onclick={ctx.link().callback(|_| Msg::AddMeeting)}>{ "Add Meeting" }</button>
+                </div>
+            }
+        } else {
+            html! {}
+        };
+        let meetings: Vec<_> = self
+        .meetings
+        .iter()
+        .map(|meeting| {
+            let name = meeting.name.clone();
+            let id = meeting.id;
+            html! {
+                <tr>
+                    <td>{ name }</td>
+                    <td>
+                        <button onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(id))}>{"DELETE"}</button>
+                    </td>
+                </tr>
+            }
+        })
+        .collect();
+
+        html! {
+            <div>
+                {new_meeting}
+                <table>
+                    {meetings}
+                </table>
+            </div>
+        }
+    }
+
     fn tabs_html(&self, ctx: &Context<Self>) -> Html {
         let item_class = |tag| {
             if self.active_tab == tag {
@@ -198,6 +298,9 @@ impl Model {
             <ul class="nav nav-tabs">
                 <li class={ item_class(Tab::TopicManagment) }>
                     <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::TopicManagment))}>{ "Topics" }</a>
+                </li>
+                <li class={ item_class(Tab::MeetingManagement) }>
+                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingManagement))}>{ "Meetings" }</a>
                 </li>
                 <li class={ item_class(Tab::MeetingPrep) }>
                     <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingPrep))}>{ "Meet" }</a>
@@ -214,6 +317,8 @@ impl Component for Model {
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
             debug: "none".to_owned(),
+            meetings: vec![],
+            new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
             user_id: UserIdState::New,
             user_topics: vec![],
@@ -234,11 +339,37 @@ impl Component for Model {
                     .send_future(async { Msg::SetUserValue(inc_and_fetch().await) });
                 true
             }
+            Msg::AddedMeeting => {
+                self.new_meeting_text = "".to_owned();
+                ctx.link().send_future(async {
+                    match fetch_meetings().await {
+                        Ok(meetings) => Msg::SetMeetings(meetings),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
             Msg::AddedTopic => {
                 self.new_topic_text = "".to_owned();
                 ctx.link().send_future(async {
                     match fetch_user_topics().await {
                         Ok(topics) => Msg::SetUserTopics(topics),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
+            Msg::AddMeeting => {
+                let meeting_name = self.new_meeting_text.clone();
+                ctx.link().send_future(async {
+                    match add_new_meeting(meeting_name).await {
+                        Ok(resp) => {
+                            if resp.status() == 200 {
+                                Msg::AddedMeeting
+                            } else {
+                                Msg::LogError(error_from_response(resp))
+                            }
+                        }
                         Err(e) => Msg::LogError(e),
                     }
                 });
@@ -255,6 +386,16 @@ impl Component for Model {
                                 Msg::LogError(error_from_response(resp))
                             }
                         }
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
+            Msg::DeleteMeeting(id) => {
+                let id = boxed::Box::new(id);
+                ctx.link().send_future(async {
+                    match delete_meeting(id).await {
+                        Ok(_) => Msg::AddedMeeting,
                         Err(e) => Msg::LogError(e),
                     }
                 });
@@ -283,6 +424,16 @@ impl Component for Model {
                 let msg = format!("got email: {}", &email);
                 js::console_log(JsValue::from(msg));
                 self.user_id = UserIdState::Fetched(email);
+                ctx.link().send_future(async {
+                    match fetch_meetings().await {
+                        Ok(meetings) => Msg::SetMeetings(meetings),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
+            Msg::SetMeetings(meetings) => {
+                self.meetings = meetings;
                 true
             }
             Msg::SetUserTopics(topics) => {
@@ -291,6 +442,10 @@ impl Component for Model {
             }
             Msg::SetUserValue(val) => {
                 self.user_value = Some(val);
+                true
+            }
+            Msg::UpdateNewMeetingText(text) => {
+                self.new_meeting_text = text;
                 true
             }
             Msg::UpdateNewTopicText(text) => {
@@ -354,15 +509,19 @@ impl Component for Model {
                 { self.tabs_html(ctx) }
                 { user_value }
                 {
-                    if self.active_tab == Tab::TopicManagment {
-                        html! {
-                            <div>
-                                { new_topic }
-                                <table>{ topics }</table>
-                            </div>
+                    match self.active_tab {
+                        Tab::TopicManagment => {
+                            html! {
+                                <div>
+                                    { new_topic }
+                                    <table>{ topics }</table>
+                                </div>
+                            }
                         }
-                    } else {
-                        html!{}
+                        Tab::MeetingManagement => {
+                            self.meeting_management_html(ctx)
+                        }
+                        Tab::MeetingPrep => html!{}
                     }
                 }
                 <p>{ &self.debug }</p>
