@@ -83,11 +83,6 @@ Pass that username and password to the back end
 when starting it,
 via command-line arguments.
 
-*WARNING*: Do not use a sensitive password
-or important Postgres user,
-because other users on your system will be able to see
-these credentials in the command using tools like `ps`.
-
 ### Preparing Caddy
 
 Caddy is run as root in order to use the regular HTTPS port.
@@ -114,21 +109,19 @@ as follows in the example below.
     trunk build && \
     sh -xe ../tpt-update.sh
 
-Starting at the repository's top level,
-the web server is built and run as shown below,
-but after editing the username and password
-for your Postgres user and password.
+Create a [TOML](https://github.com/toml-lang/toml) config file
+that contains contents you edit to supply your own values.
+Example config-file contents are shown below.
 
-*WARNING*: Do not use a sensitive password
-or important Postgres user,
-because other users on your system will be able to see
-these credentials in the command using tools like `ps`.
+    static_path = "/path/to/ehallway/ui/dist"
+    postgres_user = "ehallway"
+    postgres_password = "mypgpassword"
+
+Starting at the repository's top level,
+the web server is built and run as shown below.
 
     cd api && \
-    cargo run -- \
-      --static-path ../ui/dist \
-      --postgres-user ehallway \
-      --postgres-password ehallway
+    cargo run -- --config-file myconfig.toml
 
 Starting at the repository's top level,
 the reverse proxy server is started as shown below.

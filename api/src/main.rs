@@ -1,5 +1,6 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, fs};
 
+use anyhow::Context;
 use clap::Parser;
 use rocket::fs::FileServer;
 use rocket::serde::{
@@ -14,16 +15,17 @@ use std::*;
 use std::{convert::TryInto, path::PathBuf, result::Result};
 use tokio_postgres::{connect, Client, NoTls};
 
+#[derive(Deserialize)]
+struct Config {
+    static_path: String,
+    postgres_user: String,
+    postgres_password: String,
+}
+
 #[derive(Parser)]
 struct Cli {
-    #[clap(long, value_name = "DIRECTORY")]
-    static_path: PathBuf,
-
-    #[clap(long)]
-    postgres_user: String,
-
-    #[clap(long)]
-    postgres_password: String,
+    #[clap(long, value_name = "FILE")]
+    config_file: PathBuf,
 }
 
 #[get("/login")]
@@ -224,12 +226,15 @@ async fn show_all_users(
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    println!("{}", cli.static_path.display());
+    println!("reading config file: {}", cli.config_file.display());
 
+    let config: Config =
+        toml::from_str(&fs::read_to_string(cli.config_file).context("reading config file")?)
+            .context("parsing TOML config")?;
     let (client, conn) = connect(
         &format!(
             "host=localhost user={} password={}",
-            cli.postgres_user, cli.postgres_password
+            config.postgres_user, config.postgres_password
         ),
         NoTls,
     )
@@ -270,7 +275,7 @@ async fn main() -> anyhow::Result<()> {
                 show_all_users
             ],
         )
-        .mount("/", FileServer::from(cli.static_path))
+        .mount("/", FileServer::from(config.static_path))
         .manage(client)
         .manage(users)
         .attach(Template::fairing())
