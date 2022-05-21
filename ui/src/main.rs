@@ -34,10 +34,7 @@ enum UserIdState {
 
 impl UserIdState {
     fn is_new(&self) -> bool {
-        match self {
-            UserIdState::New => true,
-            _ => false,
-        }
+        matches!(self, UserIdState::New)
     }
 }
 
@@ -442,7 +439,7 @@ impl Component for Model {
                 }
             })
             .collect();
-        html! {
+        let main_panel = html! {
             <div>
                 { self.tabs_html(ctx) }
                 {
@@ -463,6 +460,11 @@ impl Component for Model {
                 }
                 <p>{ &self.debug }</p>
             </div>
+        };
+        if matches!(self.user_id, UserIdState::Fetched(_)) {
+            html! { main_panel }
+        } else {
+            html! {}
         }
     }
 }
