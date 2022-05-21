@@ -65,15 +65,29 @@ The parts below are in place.
 The system has a few main components.
 
 * Third-Party
-** PostgreSQL Database
-** Caddy Reverse Proxy
+    * [PostgreSQL Database](https://www.postgresql.org/)
+    * [Caddy Reverse Proxy](https://caddyserver.com/)
 * eHallway Originals
-** API Server
-** UI
+    * API Server
+    * UI
 
 ### Configuring Postgres
 
+The back-end server creates tables on startup
+if they do not already exist.
+Beforehand, create an `ehallway` user
+and set a password
+by following the PostgreSQL documentation.
+
+Pass that username and password to the back end
+when starting it,
+via command-line arguments.
+
 ### Preparing Caddy
+
+Caddy is run as root in order to use the regular HTTPS port.
+If you use a script as shown in the example below,
+you do not have to configure Caddy.
 
 ## System Startup
 
