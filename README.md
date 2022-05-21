@@ -1,6 +1,26 @@
 # eHallway
 
-Teleworkers accidentally meeting each other.
+"Teleworkers accidentally meeting each other"
+
+This implementation is incomplete but contains examples
+of working web technologies.
+
+## Technologies
+
+This software has a web server (back end)
+and a web user interface (front end),
+both implemented in [Rust](https://www.rust-lang.org/).
+
+The front end has a [React](https://reactjs.org/)-like implementation
+written in Rust by using [yew v0.19](https://yew.rs/)
+and compiled to [Web Assembly (wasm)](https://webassembly.org/)
+and bundled with [trunk](https://trunkrs.dev/).
+
+The back end is also written in Rust
+using the [Rocket](https://rocket.rs/) framework
+with [rocket_auth](https://docs.rs/rocket_auth/latest/rocket_auth/)
+and [tokio_postgres](https://docs.rs/tokio-postgres/latest/tokio_postgres/)
+working together to handle user-authenticated sessions.
 
 ## Concepts
 
