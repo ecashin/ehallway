@@ -8,6 +8,7 @@ use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 mod chance;
+mod cull;
 mod js;
 
 enum Msg {
