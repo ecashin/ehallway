@@ -39,14 +39,8 @@ async fn get_signup() -> Template {
 }
 
 #[post("/signup", data = "<form>")]
-async fn post_signup(
-    auth: Auth<'_>,
-    client: &State<sync::Arc<Client>>,
-    form: Form<Signup>,
-) -> Result<Redirect, Error> {
+async fn post_signup(auth: Auth<'_>, form: Form<Signup>) -> Result<Redirect, Error> {
     auth.signup(&form).await?;
-    let login: rocket_auth::Login = form.clone().into();
-    client.execute(USER_VAL_SETUP, &[&login.email]).await?;
     auth.login(&form.into()).await?;
 
     Ok(Redirect::to("/"))
@@ -69,13 +63,7 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_TABLES: [&str; 4] = [
-    "
-    CREATE TABLE IF NOT EXISTS user_value (
-        email VARCHAR (254) UNIQUE NOT NULL primary key,
-        value integer DEFAULT 0
-    );
-    ",
+const CREATE_TABLES: [&str; 3] = [
     "
     create table if not exists user_topics (
         email varchar (254) not null,
@@ -97,17 +85,6 @@ const CREATE_TABLES: [&str; 4] = [
     );
     ",
 ];
-
-const USER_VAL_SETUP: &str = "
-    insert into user_value (email) values ($1)
-    on conflict do nothing;
-";
-
-const USER_VAL_INC: &str = "
-    update user_value
-        set value = value + 1
-    where email = $1;
-";
 
 const NEW_MEETING: &str = "
     insert into meetings (name)
@@ -151,33 +128,6 @@ async fn add_new_topic(
         .execute(NEW_TOPIC, &[&user.email(), &topic.new_topic])
         .await?;
     Ok(json!({"inserted": true}))
-}
-
-#[get("/inc")]
-async fn increment_user_value(
-    client: &State<sync::Arc<Client>>,
-    user: User,
-) -> Result<Value, Error> {
-    client.execute(USER_VAL_INC, &[&user.email()]).await?;
-    let stmt = client
-        .prepare("select value from user_value where email = $1")
-        .await?;
-    let rows = client.query(&stmt, &[&user.email()]).await?;
-    assert_eq!(rows.len(), 1);
-    let count = rows[0].get::<_, i32>(0);
-    Ok(json!({ "metric": count }))
-}
-
-#[get("/user_value")]
-async fn get_user_value(user: User, client: &State<sync::Arc<Client>>) -> Value {
-    let stmt = client
-        .prepare("select value from user_value where email = $1")
-        .await
-        .unwrap();
-    let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
-    assert_eq!(rows.len(), 1);
-    let value = rows[0].get::<_, i32>(0);
-    json!({ "metric": value })
 }
 
 #[delete("/meetings/<id>")]
@@ -298,9 +248,7 @@ async fn main() -> anyhow::Result<()> {
                 delete_topic,
                 get_meetings,
                 get_user_topics,
-                get_user_value,
                 get_user_id,
-                increment_user_value,
                 get_login,
                 post_signup,
                 get_signup,

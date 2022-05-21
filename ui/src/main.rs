@@ -11,7 +11,6 @@ mod js;
 
 enum Msg {
     AddMeeting,
-    AddOne,
     AddTopic,
     AddedMeeting,
     AddedTopic,
@@ -23,7 +22,6 @@ enum Msg {
     SetTab(Tab),
     SetUserId(String),
     SetUserTopics(Vec<UserTopic>),
-    SetUserValue(i32),
     UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
 }
@@ -57,35 +55,7 @@ struct Model {
     new_topic_text: String,
     user_id: UserIdState,
     user_topics: Vec<UserTopic>,
-    user_value: Option<i32>,
     active_tab: Tab,
-}
-
-async fn inc_and_fetch() -> i32 {
-    let msg: UserValueMessage = http::Request::get("https://localhost/inc")
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    msg.metric
-}
-
-async fn fetch_user_value() -> Option<i32> {
-    let resp = http::Request::get("https://localhost/user_value")
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await;
-    match resp {
-        Ok(resp) => {
-            let msg: UserValueMessage = resp;
-            Some(msg.metric)
-        }
-        Err(_e) => None,
-    }
 }
 
 async fn fetch_user_id() -> Option<String> {
@@ -199,11 +169,6 @@ async fn add_new_topic(topic_text: String) -> Result<http::Response> {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
-struct UserValueMessage {
-    metric: i32,
-}
-
-#[derive(Clone, Deserialize, PartialEq)]
 struct UserIdMessage {
     email: String,
 }
@@ -215,13 +180,6 @@ impl Model {
         ctx.link().send_future(async {
             if let Some(uid) = fetch_user_id().await {
                 Msg::SetUserId(uid)
-            } else {
-                Msg::Noop
-            }
-        });
-        ctx.link().send_future(async {
-            if let Some(val) = fetch_user_value().await {
-                Msg::SetUserValue(val)
             } else {
                 Msg::Noop
             }
@@ -322,7 +280,6 @@ impl Component for Model {
             new_topic_text: "".to_owned(),
             user_id: UserIdState::New,
             user_topics: vec![],
-            user_value: None,
             active_tab: Tab::TopicManagment,
         };
         model.fetch_user("create", ctx);
@@ -334,11 +291,6 @@ impl Component for Model {
             self.fetch_user("update", ctx);
         }
         match msg {
-            Msg::AddOne => {
-                ctx.link()
-                    .send_future(async { Msg::SetUserValue(inc_and_fetch().await) });
-                true
-            }
             Msg::AddedMeeting => {
                 self.new_meeting_text = "".to_owned();
                 ctx.link().send_future(async {
@@ -440,10 +392,6 @@ impl Component for Model {
                 self.user_topics = topics;
                 true
             }
-            Msg::SetUserValue(val) => {
-                self.user_value = Some(val);
-                true
-            }
             Msg::UpdateNewMeetingText(text) => {
                 self.new_meeting_text = text;
                 true
@@ -456,16 +404,6 @@ impl Component for Model {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let user_value = if let Some(value) = self.user_value {
-            html! {
-                <div>
-                    <p>{ value }</p>
-                    <button onclick={ctx.link().callback(|_| Msg::AddOne)}>{ "+1" }</button>
-                </div>
-            }
-        } else {
-            html! {}
-        };
         let onkeypress = ctx
             .link()
             .batch_callback(move |e: KeyboardEvent| (e.key() == "Enter").then(|| Msg::AddTopic));
@@ -507,7 +445,6 @@ impl Component for Model {
         html! {
             <div>
                 { self.tabs_html(ctx) }
-                { user_value }
                 {
                     match self.active_tab {
                         Tab::TopicManagment => {
