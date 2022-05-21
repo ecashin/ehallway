@@ -99,15 +99,17 @@ and configure it to be used for building the back end.
     cd api
     rustup override set nightly
 
-## System Startup
+### Preparing UI
 
 Starting at the repository's top level,
-the user interface (UI) is built and run
+the user interface (UI) is built
 as follows in the example below.
 
     cd ui && \
     trunk build && \
     sh -xe ../tpt-update.sh
+
+## System Startup
 
 Create a [TOML](https://github.com/toml-lang/toml) config file
 that contains contents you edit to supply your own values.
