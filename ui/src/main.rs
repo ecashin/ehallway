@@ -46,7 +46,6 @@ enum Tab {
 }
 
 struct Model {
-    debug: String,
     meetings: Vec<Meeting>,
     new_meeting_text: String,
     new_topic_text: String,
@@ -271,7 +270,6 @@ impl Component for Model {
 
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
-            debug: "none".to_owned(),
             meetings: vec![],
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
@@ -458,7 +456,6 @@ impl Component for Model {
                         Tab::MeetingPrep => html!{}
                     }
                 }
-                <p>{ &self.debug }</p>
             </div>
         };
         if matches!(self.user_id, UserIdState::Fetched(_)) {
