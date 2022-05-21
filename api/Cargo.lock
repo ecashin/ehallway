@@ -502,6 +502,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ehallway"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rocket 0.5.0-rc.2",
+ "rocket_auth",
+ "rocket_contrib",
+ "rocket_dyn_templates",
+ "rocket_http 0.4.10",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
 name = "either"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2845,23 +2862,6 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
-
-[[package]]
-name = "vhallway"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "rocket 0.5.0-rc.2",
- "rocket_auth",
- "rocket_contrib",
- "rocket_dyn_templates",
- "rocket_http 0.4.10",
- "serde",
- "serde_json",
- "tokio",
- "tokio-postgres",
-]
 
 [[package]]
 name = "walkdir"

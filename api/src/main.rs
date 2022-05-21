@@ -12,12 +12,18 @@ use rocket_dyn_templates::Template;
 use serde_json::json;
 use std::*;
 use std::{convert::TryInto, path::PathBuf, result::Result};
-use tokio_postgres::{connect, Client};
+use tokio_postgres::{connect, Client, NoTls};
 
 #[derive(Parser)]
 struct Cli {
     #[clap(long, value_name = "DIRECTORY")]
     static_path: PathBuf,
+
+    #[clap(long)]
+    postgres_user: String,
+
+    #[clap(long)]
+    postgres_password: String,
 }
 
 #[get("/login")]
@@ -220,8 +226,14 @@ async fn main() -> anyhow::Result<()> {
 
     println!("{}", cli.static_path.display());
 
-    use tokio_postgres::NoTls;
-    let (client, conn) = connect("host=localhost user=vhallway password=vhallway", NoTls).await?;
+    let (client, conn) = connect(
+        &format!(
+            "host=localhost user={} password={}",
+            cli.postgres_user, cli.postgres_password
+        ),
+        NoTls,
+    )
+    .await?;
     let client = sync::Arc::new(client);
     let users: Users = client.clone().into();
 
