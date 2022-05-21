@@ -7,6 +7,7 @@ use wasm_bindgen::prelude::JsValue;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
+mod chance;
 mod js;
 
 enum Msg {
