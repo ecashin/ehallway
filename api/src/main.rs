@@ -7,7 +7,7 @@ use rocket::serde::{
     json::{Json, Value},
     {Deserialize, Serialize},
 };
-use rocket::{delete, form::*, get, post, response::Redirect, routes, State};
+use rocket::{delete, form::*, get, post, put, response::Redirect, routes, State};
 use rocket_auth::{prelude::Error, *};
 use rocket_dyn_templates::Template;
 use serde_json::json;
@@ -168,6 +168,31 @@ async fn delete_topic(user: User, client: &State<sync::Arc<Client>>, id: u32) ->
     json!({ "deleted": id })
 }
 
+#[put("/meeting/<id>/score", format = "json", data = "<score_msg>")]
+async fn store_meeting_score(
+    user: User,
+    client: &State<sync::Arc<Client>>,
+    id: u32,
+    score_msg: Json<ScoreMessage>,
+) -> Value {
+    let identifier = id as i64;
+    let score = score_msg.score;
+    client
+        .execute(
+            "insert into meeting_scores
+                (meeting, email, score)
+                values
+                ($1, $2, $3)
+            on conflict (meeting, email) do update
+                set score = excluded.score
+            ",
+            &[&identifier, &user.email(), &score],
+        )
+        .await
+        .unwrap();
+    json!({ "stored": score })
+}
+
 const GET_SCORED_MEETINGS: &str = "
     select meetings.name, meetings.id, coalesce(score,0) as score
     from meetings left outer join
@@ -177,6 +202,24 @@ const GET_SCORED_MEETINGS: &str = "
             where email = $1) q
     on meetings.id = q.id;
 ";
+
+#[derive(Serialize)]
+struct Meeting {
+    name: String,
+    id: u32,
+}
+
+#[derive(Serialize)]
+struct MeetingMessage {
+    meeting: Meeting,
+    score: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct ScoreMessage {
+    score: u32,
+}
 
 #[get("/meetings")]
 async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
@@ -189,7 +232,13 @@ async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
             let id = row.get::<_, i64>(1);
             let score = row.get::<_, i32>(2);
             assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
-            (name, id as u32, score)
+            MeetingMessage {
+                meeting: Meeting {
+                    name,
+                    id: id as u32,
+                },
+                score: score as u32,
+            }
         })
         .collect();
     json!({ "meetings": meetings })
@@ -284,8 +333,9 @@ async fn main() -> anyhow::Result<()> {
                 get_login,
                 post_signup,
                 get_signup,
-                post_login,
                 logout,
+                post_login,
+                store_meeting_score,
                 delete,
                 show_all_users
             ],

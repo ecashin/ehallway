@@ -1,4 +1,4 @@
-use std::boxed;
+use std::{boxed, collections::HashMap};
 
 use anyhow::{anyhow, Error, Result};
 use gloo_net::http;
@@ -18,12 +18,15 @@ enum Msg {
     AddedTopic,
     DeleteMeeting(u32),
     DeleteTopic(u32),
+    DidStoreMeetingScore,
     LogError(Error),
     Noop,
-    SetMeetings(Vec<Meeting>),
+    SetMeetings(HashMap<u32, (String, u32)>),
     SetTab(Tab),
     SetUserId(String),
-    SetUserTopics(Vec<UserTopic>),
+    SetUserTopics(Vec<UserTopic>),  // set in Model
+    StoreMeetingScore(u32),         // store to database
+    UpdateMeetingScore((u32, u32)), // update in Model
     UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
 }
@@ -48,7 +51,7 @@ enum Tab {
 }
 
 struct Model {
-    meetings: Vec<Meeting>,
+    meetings: HashMap<u32, (String, u32)>,
     new_meeting_text: String,
     new_topic_text: String,
     user_id: UserIdState,
@@ -78,10 +81,15 @@ fn error_from_response(resp: http::Response) -> Error {
     anyhow!("response status {status}: {}", resp.status_text())
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, Hash, PartialEq, Eq)]
 struct Meeting {
     name: String,
     id: u32,
+}
+
+#[derive(Deserialize)]
+struct MeetingMessage {
+    meeting: Meeting,
     score: u32,
 }
 
@@ -93,7 +101,7 @@ struct UserTopic {
 
 #[derive(Deserialize)]
 struct MeetingsMessage {
-    meetings: Vec<Meeting>,
+    meeting_messages: Vec<MeetingMessage>,
 }
 
 #[derive(Deserialize)]
@@ -101,7 +109,7 @@ struct UserTopicsMessage {
     topics: Vec<UserTopic>,
 }
 
-async fn fetch_meetings() -> Result<Vec<Meeting>> {
+async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
     let resp: std::result::Result<MeetingsMessage, gloo_net::Error> =
         http::Request::get("https://localhost/meetings")
             .send()
@@ -109,7 +117,11 @@ async fn fetch_meetings() -> Result<Vec<Meeting>> {
             .json()
             .await;
     match resp {
-        Ok(msg) => Ok(msg.meetings),
+        Ok(msg) => Ok(msg
+            .meeting_messages
+            .iter()
+            .map(|mm| (mm.meeting.id, (mm.meeting.name.clone(), mm.score)))
+            .collect::<HashMap<_, _>>()),
         Err(e) => Err(e.into()),
     }
 }
@@ -146,6 +158,15 @@ async fn delete_meeting(id: boxed::Box<u32>) -> Result<()> {
 async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
     let url = format!("https://localhost/topics/{}", id);
     gloo_net::http::Request::delete(&url).send().await?;
+    Ok(())
+}
+
+async fn store_meeting_score(meeting_id: boxed::Box<u32>, score: boxed::Box<u32>) -> Result<()> {
+    let url = format!("https://localhost/meeting/{}/score", meeting_id);
+    gloo_net::http::Request::put(&url)
+        .json(&score)?
+        .send()
+        .await?;
     Ok(())
 }
 
@@ -217,17 +238,39 @@ impl Model {
             html! {}
         };
         let meetings: Vec<_> = self
-        .meetings
-        .iter()
-        .map(|meeting| {
-            let name = meeting.name.clone();
-            let id = meeting.id;
+            .meetings
+            .iter()
+            .map(|(id, (name, score))| (*id, name.clone(), *score))
+            .collect();
+        let meetings: Vec<_> = meetings.into_iter()
+        .map(|(meeting_id, name, score)| {
+            let name = name.clone();
+            let onkeypress = ctx
+            .link()
+            .batch_callback(move |e: KeyboardEvent| {
+                (e.key() == "Enter").then(|| Msg::StoreMeetingScore(meeting_id))
+            });
             html! {
                 <tr>
                     <td>{ name }</td>
-                    <td>{ meeting.score }</td>
                     <td>
-                        <button onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(id))}>{"DELETE"}</button>
+                    <input
+                        type="text"
+                        value={score.to_string()}
+                        { onkeypress }
+                        oninput={
+                            ctx.link().callback(move |e: InputEvent| {
+                                let input = e.target_unchecked_into::<HtmlInputElement>();
+                                match input.value().parse::<u32>() {
+                                    Ok(v) => Msg::UpdateMeetingScore((meeting_id, v)),
+                                    Err(_) => Msg::Noop,
+                                }
+                        })}
+                    />
+                    { score }
+                    </td>
+                    <td>
+                        <button onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(meeting_id))}>{"DELETE"}</button>
                     </td>
                 </tr>
             }
@@ -279,7 +322,7 @@ impl Component for Model {
 
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
-            meetings: vec![],
+            meetings: HashMap::new(),
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
             user_id: UserIdState::New,
@@ -367,11 +410,42 @@ impl Component for Model {
                 });
                 true
             }
+            Msg::DidStoreMeetingScore => {
+                ctx.link().send_future(async {
+                    match fetch_meetings().await {
+                        Ok(meetings) => Msg::SetMeetings(meetings),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
             Msg::LogError(e) => {
                 js::console_log(JsValue::from(format!("{e}")));
                 true
             }
             Msg::Noop => true,
+            Msg::SetMeetings(meetings) => {
+                self.meetings = meetings;
+                true
+            }
+            Msg::StoreMeetingScore(meeting_id) => {
+                if let Some((_, score)) = self.meetings.get(&meeting_id) {
+                    let score = boxed::Box::new(*score);
+                    let meeting_id = boxed::Box::new(meeting_id);
+                    ctx.link().send_future(async {
+                        match store_meeting_score(meeting_id, score).await {
+                            Ok(_) => Msg::DidStoreMeetingScore,
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
+                } else {
+                    js::console_log(JsValue::from(format!(
+                        "meeting ID without score: {:?}",
+                        meeting_id
+                    )));
+                }
+                true
+            }
             Msg::SetTab(tab) => {
                 self.active_tab = tab;
                 true
@@ -388,12 +462,14 @@ impl Component for Model {
                 });
                 true
             }
-            Msg::SetMeetings(meetings) => {
-                self.meetings = meetings;
-                true
-            }
             Msg::SetUserTopics(topics) => {
                 self.user_topics = topics;
+                true
+            }
+            Msg::UpdateMeetingScore((id, score)) => {
+                self.meetings.entry(id).and_modify(|(_, entry_score)| {
+                    *entry_score = score;
+                });
                 true
             }
             Msg::UpdateNewMeetingText(text) => {
