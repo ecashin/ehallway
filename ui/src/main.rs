@@ -82,6 +82,7 @@ fn error_from_response(resp: http::Response) -> Error {
 struct Meeting {
     name: String,
     id: u32,
+    score: u32,
 }
 
 #[derive(Deserialize)]
@@ -224,6 +225,7 @@ impl Model {
             html! {
                 <tr>
                     <td>{ name }</td>
+                    <td>{ meeting.score }</td>
                     <td>
                         <button onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(id))}>{"DELETE"}</button>
                     </td>
@@ -236,6 +238,11 @@ impl Model {
             <div>
                 {new_meeting}
                 <table>
+                    <tr>
+                        <th>{ "name" }</th>
+                        <th>{ "score" }</th>
+                        <th></th>
+                    </tr>
                     {meetings}
                 </table>
             </div>

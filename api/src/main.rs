@@ -71,7 +71,7 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_TABLES: [&str; 3] = [
+const CREATE_TABLES: [&str; 4] = [
     "
     create table if not exists user_topics (
         email varchar (254) not null,
@@ -90,6 +90,13 @@ const CREATE_TABLES: [&str; 3] = [
     create table if not exists meeting_participants (
         meeting bigint not null,
         email varchar (254) not null
+    );
+    ",
+    "
+    create table if not exists meeting_scores (
+        meeting bigint not null,
+        email varchar (254) not null,
+        score integer default 0
     );
     ",
 ];
@@ -161,20 +168,28 @@ async fn delete_topic(user: User, client: &State<sync::Arc<Client>>, id: u32) ->
     json!({ "deleted": id })
 }
 
+const GET_SCORED_MEETINGS: &str = "
+    select meetings.name, meetings.id, coalesce(score,0) as score
+    from meetings left outer join
+        (select id, score
+            from meetings left outer join meeting_scores
+            on meetings.id = meeting_scores.meeting
+            where email = $1) q
+    on meetings.id = q.id;
+";
+
 #[get("/meetings")]
-async fn get_meetings(_user: User, client: &State<sync::Arc<Client>>) -> Value {
-    let stmt = client
-        .prepare("select name, id from meetings")
-        .await
-        .unwrap();
-    let rows = client.query(&stmt, &[]).await.unwrap();
+async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
+    let stmt = client.prepare(GET_SCORED_MEETINGS).await.unwrap();
+    let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
     let meetings: Vec<_> = rows
         .iter()
         .map(|row| {
             let name = row.get::<_, String>(0);
             let id = row.get::<_, i64>(1);
+            let score = row.get::<_, i32>(2);
             assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
-            (name, id as u32)
+            (name, id as u32, score)
         })
         .collect();
     json!({ "meetings": meetings })

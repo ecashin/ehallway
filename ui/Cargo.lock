@@ -70,8 +70,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9be70c98951c83b8d2f8f60d7065fa6d5146873094452a1008da8c2f1e4205ad"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -457,6 +459,7 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "getrandom",
  "gloo-net",
  "gloo-utils",
  "js-sys",
