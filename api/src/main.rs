@@ -176,7 +176,7 @@ async fn store_meeting_score(
     score_msg: Json<ScoreMessage>,
 ) -> Value {
     let identifier = id as i64;
-    let score = score_msg.score;
+    let score = score_msg.score as i32;
     client
         .execute(
             "insert into meeting_scores

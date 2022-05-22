@@ -101,7 +101,7 @@ struct UserTopic {
 
 #[derive(Deserialize)]
 struct MeetingsMessage {
-    meeting_messages: Vec<MeetingMessage>,
+    meetings: Vec<MeetingMessage>,
 }
 
 #[derive(Deserialize)]
@@ -118,7 +118,7 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
             .await;
     match resp {
         Ok(msg) => Ok(msg
-            .meeting_messages
+            .meetings
             .iter()
             .map(|mm| (mm.meeting.id, (mm.meeting.name.clone(), mm.score)))
             .collect::<HashMap<_, _>>()),
@@ -161,10 +161,14 @@ async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
     Ok(())
 }
 
+#[derive(Serialize)]
+struct ScoreMessage {
+    score: u32,
+}
 async fn store_meeting_score(meeting_id: boxed::Box<u32>, score: boxed::Box<u32>) -> Result<()> {
     let url = format!("https://localhost/meeting/{}/score", meeting_id);
     gloo_net::http::Request::put(&url)
-        .json(&score)?
+        .json(&ScoreMessage { score: *score })?
         .send()
         .await?;
     Ok(())
