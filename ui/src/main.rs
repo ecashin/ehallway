@@ -20,13 +20,14 @@ enum Msg {
     DeleteTopic(u32),
     DidStoreMeetingScore,
     LogError(Error),
+    MeetingDown(u32),
+    MeetingUp(u32),
     Noop,
     SetMeetings(HashMap<u32, (String, u32)>),
     SetTab(Tab),
     SetUserId(String),
-    SetUserTopics(Vec<UserTopic>),  // set in Model
-    StoreMeetingScore(u32),         // store to database
-    UpdateMeetingScore((u32, u32)), // update in Model
+    SetUserTopics(Vec<UserTopic>), // set in Model
+    StoreMeetingScore(u32),        // store to database
     UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
 }
@@ -241,37 +242,25 @@ impl Model {
         } else {
             html! {}
         };
-        let meetings: Vec<_> = self
+        let mut meetings: Vec<_> = self
             .meetings
             .iter()
             .map(|(id, (name, score))| (*id, name.clone(), *score))
             .collect();
+        meetings.sort_by(|(_a_id, _a_name, a_score), (_b_id, _b_name, b_score)| {
+            b_score.partial_cmp(a_score).unwrap()
+        });
         let meetings: Vec<_> = meetings.into_iter()
         .map(|(meeting_id, name, score)| {
             let name = name.clone();
-            let onkeypress = ctx
-            .link()
-            .batch_callback(move |e: KeyboardEvent| {
-                (e.key() == "Enter").then(|| Msg::StoreMeetingScore(meeting_id))
-            });
             html! {
                 <tr>
                     <td>{ name }</td>
                     <td>
-                    <input
-                        type="text"
-                        value={score.to_string()}
-                        { onkeypress }
-                        oninput={
-                            ctx.link().callback(move |e: InputEvent| {
-                                let input = e.target_unchecked_into::<HtmlInputElement>();
-                                match input.value().parse::<u32>() {
-                                    Ok(v) => Msg::UpdateMeetingScore((meeting_id, v)),
-                                    Err(_) => Msg::Noop,
-                                }
-                        })}
-                    />
-                    { score }
+                        <button onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}>{format!("UP{}", score)}</button>
+                    </td>
+                    <td>
+                        <button onclick={ctx.link().callback(move |_| Msg::MeetingDown(meeting_id))}>{"DOWN"}</button>
                     </td>
                     <td>
                         <button onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(meeting_id))}>{"DELETE"}</button>
@@ -287,13 +276,24 @@ impl Model {
                 <table>
                     <tr>
                         <th>{ "name" }</th>
-                        <th>{ "score" }</th>
+                        <th></th>
+                        <th></th>
                         <th></th>
                     </tr>
                     {meetings}
                 </table>
             </div>
         }
+    }
+
+    fn sorted_by_score_meetings(&self) -> Vec<(u32, u32)> {
+        let mut mtgs: Vec<_> = self
+            .meetings
+            .iter()
+            .map(|(id, (_name, score))| (*id, *score))
+            .collect();
+        mtgs.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
+        mtgs
     }
 
     fn tabs_html(&self, ctx: &Context<Self>) -> Html {
@@ -427,6 +427,48 @@ impl Component for Model {
                 js::console_log(JsValue::from(format!("{e}")));
                 true
             }
+            Msg::MeetingDown(down_id) => {
+                let mut mtgs = self.sorted_by_score_meetings();
+                if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == down_id) {
+                    if pos > 0 {
+                        mtgs[pos].1 -= 1;
+                        if pos > 0 {
+                            mtgs[pos - 1].1 += 1;
+                        }
+                        for (id, score) in mtgs {
+                            self.meetings.entry(id).and_modify(|(_, entry_score)| {
+                                let modified = *entry_score != score;
+                                *entry_score = score;
+                                if modified {
+                                    ctx.link().send_message(Msg::StoreMeetingScore(id));
+                                }
+                            });
+                        }
+                    }
+                }
+                true
+            }
+            Msg::MeetingUp(up_id) => {
+                let mut mtgs = self.sorted_by_score_meetings();
+                if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == up_id) {
+                    if pos < mtgs.len() - 1 {
+                        mtgs[pos].1 += 1;
+                        if (pos + 1) < mtgs.len() {
+                            mtgs[pos + 1].1 -= 1;
+                        }
+                        for (id, score) in mtgs {
+                            self.meetings.entry(id).and_modify(|(_, entry_score)| {
+                                let modified = *entry_score != score;
+                                *entry_score = score;
+                                if modified {
+                                    ctx.link().send_message(Msg::StoreMeetingScore(id));
+                                }
+                            });
+                        }
+                    }
+                }
+                true
+            }
             Msg::Noop => true,
             Msg::SetMeetings(meetings) => {
                 self.meetings = meetings;
@@ -468,12 +510,6 @@ impl Component for Model {
             }
             Msg::SetUserTopics(topics) => {
                 self.user_topics = topics;
-                true
-            }
-            Msg::UpdateMeetingScore((id, score)) => {
-                self.meetings.entry(id).and_modify(|(_, entry_score)| {
-                    *entry_score = score;
-                });
                 true
             }
             Msg::UpdateNewMeetingText(text) => {
