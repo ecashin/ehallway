@@ -71,7 +71,7 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_TABLES: [&str; 4] = [
+const CREATE_TABLES: [&str; 5] = [
     "
     create table if not exists user_topics (
         email varchar (254) not null,
@@ -98,6 +98,11 @@ const CREATE_TABLES: [&str; 4] = [
         email varchar (254) not null,
         score integer default 0
     );
+    ",
+    "
+    create unique index if not exists user_mtg_score_idx
+    on meeting_scores
+    (meeting, email);
     ",
 ];
 
