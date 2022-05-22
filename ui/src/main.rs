@@ -118,11 +118,22 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
             .json()
             .await;
     match resp {
-        Ok(msg) => Ok(msg
-            .meetings
-            .iter()
-            .map(|mm| (mm.meeting.id, (mm.meeting.name.clone(), mm.score)))
-            .collect::<HashMap<_, _>>()),
+        Ok(msg) => {
+            let mut mtgs: Vec<_> = msg
+                .meetings
+                .iter()
+                .map(|mm| (mm.meeting.id, (mm.meeting.name.clone(), mm.score)))
+                .collect();
+            mtgs.sort_by(|(_, (_, a)), (_, (_, b))| a.partial_cmp(b).unwrap());
+            Ok(mtgs
+                .into_iter()
+                .enumerate()
+                .map(|(i, mtg)| {
+                    let (id, (name, score)) = mtg;
+                    (id, (name, i as u32))
+                })
+                .collect::<HashMap<_, _>>())
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -252,7 +263,6 @@ impl Model {
         });
         let meetings: Vec<_> = meetings.into_iter()
         .map(|(meeting_id, name, score)| {
-            let name = name.clone();
             html! {
                 <tr>
                     <td>{ name }</td>
@@ -293,7 +303,10 @@ impl Model {
             .map(|(id, (_name, score))| (*id, *score))
             .collect();
         mtgs.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
-        mtgs
+        mtgs.into_iter()
+            .enumerate()
+            .map(|(i, (id, _score))| (id, i as u32))
+            .collect()
     }
 
     fn tabs_html(&self, ctx: &Context<Self>) -> Html {
@@ -430,11 +443,13 @@ impl Component for Model {
             Msg::MeetingDown(down_id) => {
                 let mut mtgs = self.sorted_by_score_meetings();
                 if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == down_id) {
-                    if pos > 0 {
+                    if pos > 0 && mtgs.len() > 1 {
+                        js::console_log(JsValue::from(format!(
+                            "pos:{} score:{} direction:{}",
+                            pos, mtgs[pos].1, "down"
+                        )));
                         mtgs[pos].1 -= 1;
-                        if pos > 0 {
-                            mtgs[pos - 1].1 += 1;
-                        }
+                        mtgs[pos - 1].1 += 1;
                         for (id, score) in mtgs {
                             self.meetings.entry(id).and_modify(|(_, entry_score)| {
                                 let modified = *entry_score != score;
@@ -451,11 +466,13 @@ impl Component for Model {
             Msg::MeetingUp(up_id) => {
                 let mut mtgs = self.sorted_by_score_meetings();
                 if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == up_id) {
-                    if pos < mtgs.len() - 1 {
+                    if pos < mtgs.len() - 1 && mtgs.len() > 1 {
+                        js::console_log(JsValue::from(format!(
+                            "pos:{} score:{} direction:{}",
+                            pos, mtgs[pos].1, "up"
+                        )));
                         mtgs[pos].1 += 1;
-                        if (pos + 1) < mtgs.len() {
-                            mtgs[pos + 1].1 -= 1;
-                        }
+                        mtgs[pos + 1].1 -= 1;
                         for (id, score) in mtgs {
                             self.meetings.entry(id).and_modify(|(_, entry_score)| {
                                 let modified = *entry_score != score;
