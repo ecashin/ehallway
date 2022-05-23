@@ -7,7 +7,7 @@ use rocket::serde::{
     json::{Json, Value},
     {Deserialize, Serialize},
 };
-use rocket::{delete, form::*, get, post, response::Redirect, routes, State};
+use rocket::{delete, form::*, get, post, put, response::Redirect, routes, State};
 use rocket_auth::{prelude::Error, *};
 use rocket_dyn_templates::Template;
 use serde_json::json;
@@ -71,7 +71,7 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_TABLES: [&str; 3] = [
+const CREATE_TABLES: [&str; 5] = [
     "
     create table if not exists user_topics (
         email varchar (254) not null,
@@ -82,8 +82,8 @@ const CREATE_TABLES: [&str; 3] = [
     ",
     "
     create table if not exists meetings (
-        name varchar (254) not null,
-        id bigserial primary key
+        name varchar (254) primary key,
+        id bigserial
     );
     ",
     "
@@ -92,18 +92,19 @@ const CREATE_TABLES: [&str; 3] = [
         email varchar (254) not null
     );
     ",
+    "
+    create table if not exists meeting_scores (
+        meeting bigint not null,
+        email varchar (254) not null,
+        score integer default 0
+    );
+    ",
+    "
+    create unique index if not exists user_mtg_score_idx
+    on meeting_scores
+    (meeting, email);
+    ",
 ];
-
-const NEW_MEETING: &str = "
-    insert into meetings (name)
-    values ($1);
-";
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
-struct NewMeeting<'r> {
-    name: Cow<'r, str>,
-}
 
 const NEW_TOPIC: &str = "
     insert into user_topics (email, topic)
@@ -116,13 +117,39 @@ struct NewTopic<'r> {
     new_topic: Cow<'r, str>,
 }
 
+const NEW_MEETING: &str = "
+    insert into meetings (name)
+    values ($1)
+    returning id;
+";
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct NewMeeting<'r> {
+    name: Cow<'r, str>,
+}
+
 #[post("/meetings", data = "<meeting>", format = "json")]
 async fn add_new_meeting(
     client: &State<sync::Arc<Client>>,
-    _user: User,
+    user: User,
     meeting: Json<NewMeeting<'_>>,
 ) -> Result<Value, Error> {
-    client.execute(NEW_MEETING, &[&meeting.name]).await?;
+    let stmt = client.prepare(NEW_MEETING).await?;
+    let rows = client.query(&stmt, &[&meeting.name]).await?;
+    let id = rows[0].get::<_, i64>(0);
+    println!("new meeting {} with id {id}", &meeting.name);
+    let sql = "
+        insert into meeting_scores (meeting, email, score)
+        values ($1, $2::varchar,
+            (select 1 +
+                (select coalesce(max(score), 0) as score
+                    from meeting_scores where email = $2
+                )
+            )
+        );
+    ";
+    client.execute(sql, &[&id, &user.email()]).await.unwrap();
     Ok(json!({"inserted": true}))
 }
 
@@ -161,20 +188,77 @@ async fn delete_topic(user: User, client: &State<sync::Arc<Client>>, id: u32) ->
     json!({ "deleted": id })
 }
 
-#[get("/meetings")]
-async fn get_meetings(_user: User, client: &State<sync::Arc<Client>>) -> Value {
-    let stmt = client
-        .prepare("select name, id from meetings")
+#[put("/meeting/<id>/score", format = "json", data = "<score_msg>")]
+async fn store_meeting_score(
+    user: User,
+    client: &State<sync::Arc<Client>>,
+    id: u32,
+    score_msg: Json<ScoreMessage>,
+) -> Value {
+    let identifier = id as i64;
+    let score = score_msg.score as i32;
+    client
+        .execute(
+            "insert into meeting_scores
+                (meeting, email, score)
+                values
+                ($1, $2, $3)
+            on conflict (meeting, email) do update
+                set score = excluded.score
+            ",
+            &[&identifier, &user.email(), &score],
+        )
         .await
         .unwrap();
-    let rows = client.query(&stmt, &[]).await.unwrap();
+    json!({ "stored": score })
+}
+
+const GET_SCORED_MEETINGS: &str = "
+    select meetings.name, meetings.id, coalesce(score,0) as score
+    from meetings left outer join
+        (select id, score
+            from meetings left outer join meeting_scores
+            on meetings.id = meeting_scores.meeting
+            where email = $1) q
+    on meetings.id = q.id;
+";
+
+#[derive(Serialize)]
+struct Meeting {
+    name: String,
+    id: u32,
+}
+
+#[derive(Serialize)]
+struct MeetingMessage {
+    meeting: Meeting,
+    score: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct ScoreMessage {
+    score: u32,
+}
+
+#[get("/meetings")]
+async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
+    let stmt = client.prepare(GET_SCORED_MEETINGS).await.unwrap();
+    let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
     let meetings: Vec<_> = rows
         .iter()
         .map(|row| {
             let name = row.get::<_, String>(0);
             let id = row.get::<_, i64>(1);
+            let score = row.get::<_, i32>(2);
             assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
-            (name, id as u32)
+            MeetingMessage {
+                meeting: Meeting {
+                    name,
+                    id: id as u32,
+                },
+                score: score as u32,
+            }
         })
         .collect();
     json!({ "meetings": meetings })
@@ -269,8 +353,9 @@ async fn main() -> anyhow::Result<()> {
                 get_login,
                 post_signup,
                 get_signup,
-                post_login,
                 logout,
+                post_login,
+                store_meeting_score,
                 delete,
                 show_all_users
             ],

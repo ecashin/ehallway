@@ -1,4 +1,4 @@
-use std::boxed;
+use std::{boxed, collections::HashMap};
 
 use anyhow::{anyhow, Error, Result};
 use gloo_net::http;
@@ -7,6 +7,8 @@ use wasm_bindgen::prelude::JsValue;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
+mod chance;
+mod cull;
 mod js;
 
 enum Msg {
@@ -16,12 +18,16 @@ enum Msg {
     AddedTopic,
     DeleteMeeting(u32),
     DeleteTopic(u32),
+    DidStoreMeetingScore,
     LogError(Error),
+    MeetingDown(u32),
+    MeetingUp(u32),
     Noop,
-    SetMeetings(Vec<Meeting>),
+    SetMeetings(HashMap<u32, (String, u32)>),
     SetTab(Tab),
     SetUserId(String),
-    SetUserTopics(Vec<UserTopic>),
+    SetUserTopics(Vec<UserTopic>), // set in Model
+    StoreMeetingScore(u32),        // store to database
     UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
 }
@@ -46,7 +52,7 @@ enum Tab {
 }
 
 struct Model {
-    meetings: Vec<Meeting>,
+    meetings: HashMap<u32, (String, u32)>,
     new_meeting_text: String,
     new_topic_text: String,
     user_id: UserIdState,
@@ -76,10 +82,16 @@ fn error_from_response(resp: http::Response) -> Error {
     anyhow!("response status {status}: {}", resp.status_text())
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, Hash, PartialEq, Eq)]
 struct Meeting {
     name: String,
     id: u32,
+}
+
+#[derive(Deserialize)]
+struct MeetingMessage {
+    meeting: Meeting,
+    score: u32,
 }
 
 #[derive(Deserialize)]
@@ -90,7 +102,7 @@ struct UserTopic {
 
 #[derive(Deserialize)]
 struct MeetingsMessage {
-    meetings: Vec<Meeting>,
+    meetings: Vec<MeetingMessage>,
 }
 
 #[derive(Deserialize)]
@@ -98,7 +110,7 @@ struct UserTopicsMessage {
     topics: Vec<UserTopic>,
 }
 
-async fn fetch_meetings() -> Result<Vec<Meeting>> {
+async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
     let resp: std::result::Result<MeetingsMessage, gloo_net::Error> =
         http::Request::get("https://localhost/meetings")
             .send()
@@ -106,7 +118,22 @@ async fn fetch_meetings() -> Result<Vec<Meeting>> {
             .json()
             .await;
     match resp {
-        Ok(msg) => Ok(msg.meetings),
+        Ok(msg) => {
+            let mut mtgs: Vec<_> = msg
+                .meetings
+                .iter()
+                .map(|mm| (mm.meeting.id, (mm.meeting.name.clone(), mm.score)))
+                .collect();
+            mtgs.sort_by(|(_, (_, a)), (_, (_, b))| a.partial_cmp(b).unwrap());
+            Ok(mtgs
+                .into_iter()
+                .enumerate()
+                .map(|(i, mtg)| {
+                    let (id, (name, score)) = mtg;
+                    (id, (name, i as u32))
+                })
+                .collect::<HashMap<_, _>>())
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -143,6 +170,19 @@ async fn delete_meeting(id: boxed::Box<u32>) -> Result<()> {
 async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
     let url = format!("https://localhost/topics/{}", id);
     gloo_net::http::Request::delete(&url).send().await?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct ScoreMessage {
+    score: u32,
+}
+async fn store_meeting_score(meeting_id: boxed::Box<u32>, score: boxed::Box<u32>) -> Result<()> {
+    let url = format!("https://localhost/meeting/{}/score", meeting_id);
+    gloo_net::http::Request::put(&url)
+        .json(&ScoreMessage { score: *score })?
+        .send()
+        .await?;
     Ok(())
 }
 
@@ -213,17 +253,27 @@ impl Model {
         } else {
             html! {}
         };
-        let meetings: Vec<_> = self
-        .meetings
-        .iter()
-        .map(|meeting| {
-            let name = meeting.name.clone();
-            let id = meeting.id;
+        let mut meetings: Vec<_> = self
+            .meetings
+            .iter()
+            .map(|(id, (name, score))| (*id, name.clone(), *score))
+            .collect();
+        meetings.sort_by(|(_a_id, _a_name, a_score), (_b_id, _b_name, b_score)| {
+            b_score.partial_cmp(a_score).unwrap()
+        });
+        let meetings: Vec<_> = meetings.into_iter()
+        .map(|(meeting_id, name, _score)| {
             html! {
                 <tr>
                     <td>{ name }</td>
                     <td>
-                        <button onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(id))}>{"DELETE"}</button>
+                        <button onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}>{"UP"}</button>
+                    </td>
+                    <td>
+                        <button onclick={ctx.link().callback(move |_| Msg::MeetingDown(meeting_id))}>{"DOWN"}</button>
+                    </td>
+                    <td>
+                        <button onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(meeting_id))}>{"DELETE"}</button>
                     </td>
                 </tr>
             }
@@ -234,10 +284,29 @@ impl Model {
             <div>
                 {new_meeting}
                 <table>
+                    <tr>
+                        <th>{ "name" }</th>
+                        <th></th>
+                        <th></th>
+                        <th></th>
+                    </tr>
                     {meetings}
                 </table>
             </div>
         }
+    }
+
+    fn sorted_by_score_meetings(&self) -> Vec<(u32, u32)> {
+        let mut mtgs: Vec<_> = self
+            .meetings
+            .iter()
+            .map(|(id, (_name, score))| (*id, *score))
+            .collect();
+        mtgs.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
+        mtgs.into_iter()
+            .enumerate()
+            .map(|(i, (id, _score))| (id, i as u32))
+            .collect()
     }
 
     fn tabs_html(&self, ctx: &Context<Self>) -> Html {
@@ -270,7 +339,7 @@ impl Component for Model {
 
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
-            meetings: vec![],
+            meetings: HashMap::new(),
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
             user_id: UserIdState::New,
@@ -358,11 +427,80 @@ impl Component for Model {
                 });
                 true
             }
+            Msg::DidStoreMeetingScore => {
+                ctx.link().send_future(async {
+                    match fetch_meetings().await {
+                        Ok(meetings) => Msg::SetMeetings(meetings),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
             Msg::LogError(e) => {
                 js::console_log(JsValue::from(format!("{e}")));
                 true
             }
+            Msg::MeetingDown(down_id) => {
+                let mut mtgs = self.sorted_by_score_meetings();
+                if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == down_id) {
+                    if pos > 0 && mtgs.len() > 1 {
+                        mtgs[pos].1 -= 1;
+                        mtgs[pos - 1].1 += 1;
+                        for (id, score) in mtgs {
+                            self.meetings.entry(id).and_modify(|(_, entry_score)| {
+                                let modified = *entry_score != score;
+                                *entry_score = score;
+                                if modified {
+                                    ctx.link().send_message(Msg::StoreMeetingScore(id));
+                                }
+                            });
+                        }
+                    }
+                }
+                true
+            }
+            Msg::MeetingUp(up_id) => {
+                let mut mtgs = self.sorted_by_score_meetings();
+                if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == up_id) {
+                    if pos < mtgs.len() - 1 && mtgs.len() > 1 {
+                        mtgs[pos].1 += 1;
+                        mtgs[pos + 1].1 -= 1;
+                        for (id, score) in mtgs {
+                            self.meetings.entry(id).and_modify(|(_, entry_score)| {
+                                let modified = *entry_score != score;
+                                *entry_score = score;
+                                if modified {
+                                    ctx.link().send_message(Msg::StoreMeetingScore(id));
+                                }
+                            });
+                        }
+                    }
+                }
+                true
+            }
             Msg::Noop => true,
+            Msg::SetMeetings(meetings) => {
+                self.meetings = meetings;
+                true
+            }
+            Msg::StoreMeetingScore(meeting_id) => {
+                if let Some((_, score)) = self.meetings.get(&meeting_id) {
+                    let score = boxed::Box::new(*score);
+                    let meeting_id = boxed::Box::new(meeting_id);
+                    ctx.link().send_future(async {
+                        match store_meeting_score(meeting_id, score).await {
+                            Ok(_) => Msg::DidStoreMeetingScore,
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
+                } else {
+                    js::console_log(JsValue::from(format!(
+                        "meeting ID without score: {:?}",
+                        meeting_id
+                    )));
+                }
+                true
+            }
             Msg::SetTab(tab) => {
                 self.active_tab = tab;
                 true
@@ -377,10 +515,6 @@ impl Component for Model {
                         Err(e) => Msg::LogError(e),
                     }
                 });
-                true
-            }
-            Msg::SetMeetings(meetings) => {
-                self.meetings = meetings;
                 true
             }
             Msg::SetUserTopics(topics) => {
