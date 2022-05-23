@@ -11,6 +11,18 @@ mod chance;
 mod cull;
 mod js;
 
+fn add_icon() -> Html {
+    html! {
+        <svg xmlns="http://www.w3.org/2000/svg"
+            width="16" height="16" fill="currentColor"
+            class="bi bi-plus-square" viewBox="0 0 16 16"
+        >
+            <path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/>
+            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+        </svg>
+    }
+}
+
 fn x_icon() -> Html {
     html! {
         <svg xmlns="http://www.w3.org/2000/svg"
@@ -293,7 +305,11 @@ impl Model {
                                 Msg::UpdateNewMeetingText(input.value())
                         })}
                     />
-                    <button onclick={ctx.link().callback(|_| Msg::AddMeeting)}>{ "Add Meeting" }</button>
+                    <button
+                        onclick={ctx.link().callback(|_| Msg::AddMeeting)}
+                        type={"button"}
+                        class={"btn"}
+                    >{ add_icon() }</button>
                 </div>
             }
         } else {
@@ -310,30 +326,26 @@ impl Model {
         let meetings: Vec<_> = meetings.into_iter()
         .map(|(meeting_id, name, _score)| {
             html! {
-                <tr>
-                    <td>{ name }</td>
-                    <td>
+                <div class="row">
+                    <div class="col">{ name }</div>
+                    <div class="col">
                         <button
                             onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}
                             type={"button"}
-                            class={"btn btn-secondary"}
+                            class={"btn"}
                         >{ up_arrow() }</button>
-                    </td>
-                    <td>
                         <button
                             onclick={ctx.link().callback(move |_| Msg::MeetingDown(meeting_id))}
                             type={"button"}
-                            class={"btn btn-secondary"}
+                            class={"btn"}
                         >{ down_arrow() }</button>
-                    </td>
-                    <td>
                         <button
                             onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(meeting_id))}
                             type={"button"}
-                            class={"btn btn-secondary"}
+                            class={"btn"}
                         >{ x_icon() }</button>
-                    </td>
-                </tr>
+                    </div>
+                </div>
             }
         })
         .collect();
@@ -341,15 +353,14 @@ impl Model {
         html! {
             <div>
                 {new_meeting}
-                <table>
-                    <tr>
-                        <th>{ "name" }</th>
-                        <th></th>
-                        <th></th>
-                        <th></th>
-                    </tr>
+                <div class="container">
+                    <div class="col">
+                        { "Meetings" }
+                    </div>
+                    <div class="col">
+                    </div>
                     {meetings}
-                </table>
+                </div>
             </div>
         }
     }
@@ -607,7 +618,7 @@ impl Component for Model {
                                 Msg::UpdateNewTopicText(input.value())
                         })}
                     />
-                    <button onclick={ctx.link().callback(|_| Msg::AddTopic)}>{ "Add Topic" }</button>
+                    <button onclick={ctx.link().callback(|_| Msg::AddTopic)}>{ add_icon() }</button>
                 </div>
             }
         } else {
@@ -620,16 +631,16 @@ impl Component for Model {
                 let text = topic.text.clone();
                 let id = topic.id;
                 html! {
-                    <tr>
-                        <td>{ text }</td>
-                        <td>
+                    <div class="row">
+                        <div class="col">{ text }</div>
+                        <div class="col">
                             <button
                                 onclick={ctx.link().callback(move |_| Msg::DeleteTopic(id))}
                                 type={"button"}
-                                class={"btn btn-secondary"}
+                                class={"btn"}
                             >{ x_icon() }</button>
-                        </td>
-                    </tr>
+                        </div>
+                    </div>
                 }
             })
             .collect();
@@ -642,7 +653,7 @@ impl Component for Model {
                             html! {
                                 <div>
                                     { new_topic }
-                                    <table>{ topics }</table>
+                                    <div class="container">{ topics }</div>
                                 </div>
                             }
                         }
