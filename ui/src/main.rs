@@ -386,15 +386,23 @@ impl Model {
                 "nav-item active"
             }
         };
+        // aria-current value
+        let ac = |tag| {
+            if self.active_tab == tag {
+                "page"
+            } else {
+                "false"
+            }
+        };
         html! {
             <ul class="nav nav-tabs">
-                <li class={ item_class(Tab::TopicManagment) }>
+                <li class={ item_class(Tab::TopicManagment) } aria-current={ac(Tab::TopicManagment)}>
                     <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::TopicManagment))}>{ "Topics" }</a>
                 </li>
-                <li class={ item_class(Tab::MeetingManagement) }>
+                <li class={ item_class(Tab::MeetingManagement) } aria-current={ac(Tab::MeetingManagement)}>
                     <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingManagement))}>{ "Meetings" }</a>
                 </li>
-                <li class={ item_class(Tab::MeetingPrep) }>
+                <li class={ item_class(Tab::MeetingPrep) } aria-current={ac(Tab::MeetingPrep)}>
                     <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingPrep))}>{ "Meet" }</a>
                 </li>
             </ul>
@@ -609,16 +617,16 @@ impl Component for Model {
             html! {
                 <div>
                     <input
-                        id="new-topic"
-                        type="text"
-                        value={self.new_topic_text.clone()}
+                        id="new-topic" type="text" value={self.new_topic_text.clone()}
                         { onkeypress }
                         oninput={ctx.link().callback(|e: InputEvent| {
                                 let input = e.target_unchecked_into::<HtmlInputElement>();
                                 Msg::UpdateNewTopicText(input.value())
                         })}
                     />
-                    <button onclick={ctx.link().callback(|_| Msg::AddTopic)}>{ add_icon() }</button>
+                    <button
+                        type={"button"} class={"btn"}
+                        onclick={ctx.link().callback(|_| Msg::AddTopic)}>{ add_icon() }</button>
                 </div>
             }
         } else {
