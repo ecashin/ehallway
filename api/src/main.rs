@@ -82,8 +82,8 @@ const CREATE_TABLES: [&str; 5] = [
     ",
     "
     create table if not exists meetings (
-        name varchar (254) not null,
-        id bigserial primary key
+        name varchar (254) primary key,
+        id bigserial
     );
     ",
     "
@@ -106,17 +106,6 @@ const CREATE_TABLES: [&str; 5] = [
     ",
 ];
 
-const NEW_MEETING: &str = "
-    insert into meetings (name)
-    values ($1);
-";
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
-struct NewMeeting<'r> {
-    name: Cow<'r, str>,
-}
-
 const NEW_TOPIC: &str = "
     insert into user_topics (email, topic)
     values ($1, $2);
@@ -128,13 +117,39 @@ struct NewTopic<'r> {
     new_topic: Cow<'r, str>,
 }
 
+const NEW_MEETING: &str = "
+    insert into meetings (name)
+    values ($1)
+    returning id;
+";
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct NewMeeting<'r> {
+    name: Cow<'r, str>,
+}
+
 #[post("/meetings", data = "<meeting>", format = "json")]
 async fn add_new_meeting(
     client: &State<sync::Arc<Client>>,
-    _user: User,
+    user: User,
     meeting: Json<NewMeeting<'_>>,
 ) -> Result<Value, Error> {
-    client.execute(NEW_MEETING, &[&meeting.name]).await?;
+    let stmt = client.prepare(NEW_MEETING).await?;
+    let rows = client.query(&stmt, &[&meeting.name]).await?;
+    let id = rows[0].get::<_, i64>(0);
+    println!("new meeting {} with id {id}", &meeting.name);
+    let sql = "
+        insert into meeting_scores (meeting, email, score)
+        values ($1, $2::varchar,
+            (select 1 +
+                (select coalesce(max(score), 0) as score
+                    from meeting_scores where email = $2
+                )
+            )
+        );
+    ";
+    client.execute(sql, &[&id, &user.email()]).await.unwrap();
     Ok(json!({"inserted": true}))
 }
 

@@ -262,12 +262,12 @@ impl Model {
             b_score.partial_cmp(a_score).unwrap()
         });
         let meetings: Vec<_> = meetings.into_iter()
-        .map(|(meeting_id, name, score)| {
+        .map(|(meeting_id, name, _score)| {
             html! {
                 <tr>
                     <td>{ name }</td>
                     <td>
-                        <button onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}>{format!("UP{}", score)}</button>
+                        <button onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}>{"UP"}</button>
                     </td>
                     <td>
                         <button onclick={ctx.link().callback(move |_| Msg::MeetingDown(meeting_id))}>{"DOWN"}</button>
@@ -444,10 +444,6 @@ impl Component for Model {
                 let mut mtgs = self.sorted_by_score_meetings();
                 if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == down_id) {
                     if pos > 0 && mtgs.len() > 1 {
-                        js::console_log(JsValue::from(format!(
-                            "pos:{} score:{} direction:{}",
-                            pos, mtgs[pos].1, "down"
-                        )));
                         mtgs[pos].1 -= 1;
                         mtgs[pos - 1].1 += 1;
                         for (id, score) in mtgs {
@@ -467,10 +463,6 @@ impl Component for Model {
                 let mut mtgs = self.sorted_by_score_meetings();
                 if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == up_id) {
                     if pos < mtgs.len() - 1 && mtgs.len() > 1 {
-                        js::console_log(JsValue::from(format!(
-                            "pos:{} score:{} direction:{}",
-                            pos, mtgs[pos].1, "up"
-                        )));
                         mtgs[pos].1 += 1;
                         mtgs[pos + 1].1 -= 1;
                         for (id, score) in mtgs {
