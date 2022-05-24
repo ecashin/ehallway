@@ -108,7 +108,8 @@ const CREATE_TABLES: [&str; 5] = [
 
 const NEW_TOPIC: &str = "
     insert into user_topics (email, topic)
-    values ($1, $2);
+    values ($1, $2)
+    returning id;
 ";
 
 #[derive(Serialize, Deserialize)]
@@ -143,14 +144,15 @@ async fn add_new_meeting(
         insert into meeting_scores (meeting, email, score)
         values ($1, $2::varchar,
             (select 1 +
-                (select coalesce(max(score), 0) as score
+                (select coalesce(max(score), -1) as score
                     from meeting_scores where email = $2
                 )
             )
         );
     ";
+    // XXXdebug: remove unwrap when done debugging.
     client.execute(sql, &[&id, &user.email()]).await.unwrap();
-    Ok(json!({"inserted": true}))
+    Ok(json!({"inserted": id as u32}))
 }
 
 #[post("/topics", data = "<topic>", format = "json")]
@@ -159,10 +161,19 @@ async fn add_new_topic(
     user: User,
     topic: Json<NewTopic<'_>>,
 ) -> Result<Value, Error> {
-    client
-        .execute(NEW_TOPIC, &[&user.email(), &topic.new_topic])
-        .await?;
-    Ok(json!({"inserted": true}))
+    let stmt = client.prepare(NEW_TOPIC).await?;
+    let rows = client.query(&stmt, &[&user.email(), &topic.new_topic]).await?;
+    let id = rows[0].get::<_, i64>(0);
+    println!("new topic {} with id {id}", &topic.new_topic);
+    let sql = "
+        update user_topics
+	    set score = (select 1 + coalesce(max(score), -1)
+	        from user_topics where email = $2)
+	    where id = $1;
+    ";
+    // XXXdebug: remove unwrap when done debugging.
+    client.execute(sql, &[&id, &user.email()]).await.unwrap();
+    Ok(json!({"inserted": id as u32}))
 }
 
 #[delete("/meetings/<id>")]
@@ -235,6 +246,13 @@ struct MeetingMessage {
     score: u32,
 }
 
+#[derive(Serialize)]
+struct UserTopic {
+    text: String,
+    score: u32,
+    id: u32,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
 struct ScoreMessage {
@@ -267,7 +285,9 @@ async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
 #[get("/user_topics")]
 async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Value {
     let stmt = client
-        .prepare("select topic, id from user_topics where email = $1")
+        .prepare("
+            select topic, id, score from user_topics where email = $1
+        ")
         .await
         .unwrap();
     let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
@@ -276,8 +296,13 @@ async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Value
         .map(|row| {
             let text = row.get::<_, String>(0);
             let id = row.get::<_, i64>(1);
+            let score = row.get::<_, i32>(2);
             assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
-            (text, id as u32)
+            UserTopic {
+                text,
+                score: score as u32,
+                id: id as u32,
+            }
         })
         .collect();
     json!({ "topics": topics })

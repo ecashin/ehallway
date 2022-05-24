@@ -84,8 +84,11 @@ enum Msg {
     SetMeetings(HashMap<u32, (String, u32)>),
     SetTab(Tab),
     SetUserId(String),
-    SetUserTopics(Vec<UserTopic>), // set in Model
-    StoreMeetingScore(u32),        // store to database
+    SetUserTopics(HashMap<u32, UserTopic>), // set in Model
+    StoreMeetingScore(u32),                 // store to database
+    StoreTopicScore(u32),
+    TopicDown(u32),
+    TopicUp(u32),
     UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
 }
@@ -114,7 +117,7 @@ struct Model {
     new_meeting_text: String,
     new_topic_text: String,
     user_id: UserIdState,
-    user_topics: Vec<UserTopic>,
+    user_topics: HashMap<u32, UserTopic>,
     active_tab: Tab,
 }
 
@@ -152,9 +155,10 @@ struct MeetingMessage {
     score: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct UserTopic {
     text: String,
+    score: u32,
     id: u32,
 }
 
@@ -187,7 +191,7 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
                 .into_iter()
                 .enumerate()
                 .map(|(i, mtg)| {
-                    let (id, (name, score)) = mtg;
+                    let (id, (name, _score)) = mtg;
                     (id, (name, i as u32))
                 })
                 .collect::<HashMap<_, _>>())
@@ -196,7 +200,7 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
     }
 }
 
-async fn fetch_user_topics() -> Result<Vec<UserTopic>> {
+async fn fetch_user_topics() -> Result<HashMap<u32, UserTopic>> {
     let resp: std::result::Result<UserTopicsMessage, gloo_net::Error> =
         http::Request::get("https://localhost/user_topics")
             .send()
@@ -204,7 +208,28 @@ async fn fetch_user_topics() -> Result<Vec<UserTopic>> {
             .json()
             .await;
     match resp {
-        Ok(msg) => Ok(msg.topics),
+        Ok(msg) => {
+            let mut topics = msg.topics;
+            topics.sort_by(|a, b| {
+                let UserTopic { score: a_score, .. } = a;
+                let UserTopic { score: b_score, .. } = b;
+                a_score.partial_cmp(b_score).unwrap()
+            });
+            Ok(topics
+                .into_iter()
+                .enumerate()
+                .map(|(score, UserTopic { text, id, .. })| {
+                    (
+                        id,
+                        UserTopic {
+                            id,
+                            text,
+                            score: score as u32,
+                        },
+                    )
+                })
+                .collect::<HashMap<_, _>>())
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -235,8 +260,12 @@ async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
 struct ScoreMessage {
     score: u32,
 }
-async fn store_meeting_score(meeting_id: boxed::Box<u32>, score: boxed::Box<u32>) -> Result<()> {
-    let url = format!("https://localhost/meeting/{}/score", meeting_id);
+async fn store_score(
+    what: &str,
+    meeting_id: boxed::Box<u32>,
+    score: boxed::Box<u32>,
+) -> Result<()> {
+    let url = format!("https://localhost/{what}/{}/score", meeting_id);
     gloo_net::http::Request::put(&url)
         .json(&ScoreMessage { score: *score })?
         .send()
@@ -394,6 +423,7 @@ impl Model {
                 "false"
             }
         };
+        // https://getbootstrap.com/docs/5.0/components/navs-tabs/
         html! {
             <ul class="nav nav-tabs">
                 <li class={ item_class(Tab::TopicManagment) } aria-current={ac(Tab::TopicManagment)}>
@@ -420,7 +450,7 @@ impl Component for Model {
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
             user_id: UserIdState::New,
-            user_topics: vec![],
+            user_topics: HashMap::new(),
             active_tab: Tab::TopicManagment,
         };
         model.fetch_user("create", ctx);
@@ -560,24 +590,6 @@ impl Component for Model {
                 self.meetings = meetings;
                 true
             }
-            Msg::StoreMeetingScore(meeting_id) => {
-                if let Some((_, score)) = self.meetings.get(&meeting_id) {
-                    let score = boxed::Box::new(*score);
-                    let meeting_id = boxed::Box::new(meeting_id);
-                    ctx.link().send_future(async {
-                        match store_meeting_score(meeting_id, score).await {
-                            Ok(_) => Msg::DidStoreMeetingScore,
-                            Err(e) => Msg::LogError(e),
-                        }
-                    });
-                } else {
-                    js::console_log(JsValue::from(format!(
-                        "meeting ID without score: {:?}",
-                        meeting_id
-                    )));
-                }
-                true
-            }
             Msg::SetTab(tab) => {
                 self.active_tab = tab;
                 true
@@ -598,6 +610,41 @@ impl Component for Model {
                 self.user_topics = topics;
                 true
             }
+            Msg::StoreMeetingScore(meeting_id) => {
+                if let Some((_, score)) = self.meetings.get(&meeting_id) {
+                    let score = boxed::Box::new(*score);
+                    let meeting_id = boxed::Box::new(meeting_id);
+                    ctx.link().send_future(async {
+                        match store_score("meeting", meeting_id, score).await {
+                            Ok(_) => Msg::DidStoreMeetingScore,
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
+                } else {
+                    js::console_log(JsValue::from(format!(
+                        "meeting ID without score: {:?}",
+                        meeting_id
+                    )));
+                }
+                true
+            }
+            Msg::StoreTopicScore(id) => {
+                if let Some(topic) = self.user_topics.get(&id) {
+                    let score = boxed::Box::new(topic.score);
+                    let id = boxed::Box::new(id);
+                    ctx.link().send_future(async {
+                        match store_score("topic", id, score).await {
+                            Ok(_) => Msg::DidStoreMeetingScore,
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
+                } else {
+                    js::console_log(JsValue::from(format!("topic ID without score: {id}",)));
+                }
+                true
+            }
+            Msg::TopicDown(id) => true,
+            Msg::TopicUp(id) => true,
             Msg::UpdateNewMeetingText(text) => {
                 self.new_meeting_text = text;
                 true
@@ -632,16 +679,29 @@ impl Component for Model {
         } else {
             html! {}
         };
-        let topics: Vec<_> = self
+        let mut topics: Vec<_> = self
             .user_topics
             .iter()
-            .map(|topic| {
-                let text = topic.text.clone();
-                let id = topic.id;
+            .map(|(_, UserTopic { id, score, text })| (*id, text, *score))
+            .collect();
+        topics.sort_by(|(_, _, a_score), (_, _, b_score)| a_score.partial_cmp(b_score).unwrap());
+        let topics: Vec<_> = topics
+            .into_iter()
+            .map(|(id, text, score)| {
                 html! {
                     <div class="row">
-                        <div class="col">{ text }</div>
+                        <div class="col">{ format!("{text}:{score}") }</div>
                         <div class="col">
+                            <button
+                                onclick={ctx.link().callback(move |_| Msg::TopicUp(id))}
+                                type={"button"}
+                                class={"btn"}
+                            >{ up_arrow() }</button>
+                            <button
+                                onclick={ctx.link().callback(move |_| Msg::TopicDown(id))}
+                                type={"button"}
+                                class={"btn"}
+                            >{ down_arrow() }</button>
                             <button
                                 onclick={ctx.link().callback(move |_| Msg::DeleteTopic(id))}
                                 type={"button"}
