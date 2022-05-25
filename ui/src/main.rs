@@ -401,10 +401,26 @@ impl Model {
             .map(|(id, (_name, score))| (*id, *score))
             .collect();
         mtgs.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
-        mtgs.into_iter()
-            .enumerate()
-            .map(|(i, (id, _score))| (id, i as u32))
-            .collect()
+        mtgs
+    }
+
+    fn sorted_by_score_topics(&self) -> Vec<(u32, u32)> {
+        let mut topics: Vec<_> = self
+            .user_topics
+            .iter()
+            .map(
+                |(
+                    _,
+                    UserTopic {
+                        id,
+                        score,
+                        text: _text,
+                    },
+                )| (*id, *score),
+            )
+            .collect();
+        topics.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
+        topics
     }
 
     fn tabs_html(&self, ctx: &Context<Self>) -> Html {
@@ -643,8 +659,42 @@ impl Component for Model {
                 }
                 true
             }
-            Msg::TopicDown(id) => true,
-            Msg::TopicUp(id) => true,
+            Msg::TopicDown(down_id) => {
+                let mut topics = self.sorted_by_score_topics();
+                if let Some(pos) = topics.iter().position(|(id, _score)| *id == down_id) {
+                    if pos > 0 && topics.len() > 1 {
+                        topics[pos].1 -= 1;
+                        topics[pos - 1].1 += 1;
+                        for (id, score) in topics {
+                            self.user_topics.entry(id).and_modify(|topic| {
+                                if topic.score != score {
+                                    topic.score = score;
+                                    ctx.link().send_message(Msg::StoreTopicScore(id));
+                                }
+                            });
+                        }
+                    }
+                }
+                true
+            }
+            Msg::TopicUp(up_id) => {
+                let mut topics = self.sorted_by_score_topics();
+                if let Some(pos) = topics.iter().position(|(id, _score)| *id == up_id) {
+                    if pos < topics.len() - 1 && topics.len() > 1 {
+                        topics[pos].1 += 1;
+                        topics[pos + 1].1 -= 1;
+                        for (id, score) in topics {
+                            self.user_topics.entry(id).and_modify(|topic| {
+                                if topic.score != score {
+                                    topic.score = score;
+                                    ctx.link().send_message(Msg::StoreMeetingScore(id));
+                                }
+                            });
+                        }
+                    }
+                }
+                true
+            }
             Msg::UpdateNewMeetingText(text) => {
                 self.new_meeting_text = text;
                 true
@@ -687,10 +737,11 @@ impl Component for Model {
         topics.sort_by(|(_, _, a_score), (_, _, b_score)| a_score.partial_cmp(b_score).unwrap());
         let topics: Vec<_> = topics
             .into_iter()
-            .map(|(id, text, score)| {
+            .rev()
+            .map(|(id, text, _score)| {
                 html! {
                     <div class="row">
-                        <div class="col">{ format!("{text}:{score}") }</div>
+                        <div class="col">{ text }</div>
                         <div class="col">
                             <button
                                 onclick={ctx.link().callback(move |_| Msg::TopicUp(id))}
