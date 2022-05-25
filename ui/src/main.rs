@@ -86,6 +86,7 @@ enum Msg {
     MeetingToggleJoin(u32),
     MeetingUp(u32),
     Noop,
+    SetJoinedMeetings(Vec<u32>),
     SetMeetings(HashMap<u32, (String, u32)>),
     SetTab(Tab),
     SetUserId(String),
@@ -202,6 +203,23 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
                 })
                 .collect::<HashMap<_, _>>())
         }
+        Err(e) => Err(e.into()),
+    }
+}
+
+#[derive(Deserialize)]
+struct JoinedMeetingsMessage {
+    meetings: Vec<u32>,
+}
+async fn fetch_joined_meetings() -> Result<Vec<u32>> {
+    let resp: std::result::Result<JoinedMeetingsMessage, gloo_net::Error> =
+        http::Request::get("https://localhost/joined_meetings")
+            .send()
+            .await?
+            .json()
+            .await;
+    match resp {
+        Ok(msg) => Ok(msg.meetings),
         Err(e) => Err(e.into()),
     }
 }
@@ -329,6 +347,13 @@ impl Model {
         ctx.link().send_future(async {
             if let Ok(topics) = fetch_user_topics().await {
                 Msg::SetUserTopics(topics)
+            } else {
+                Msg::Noop
+            }
+        });
+        ctx.link().send_future(async {
+            if let Ok(meetings) = fetch_joined_meetings().await {
+                Msg::SetJoinedMeetings(meetings)
             } else {
                 Msg::Noop
             }
@@ -654,6 +679,10 @@ impl Component for Model {
                 true
             }
             Msg::Noop => true,
+            Msg::SetJoinedMeetings(meetings) => {
+                self.joined_meetings = meetings.into_iter().collect();
+                true
+            }
             Msg::SetMeetings(meetings) => {
                 self.meetings = meetings;
                 true

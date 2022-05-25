@@ -135,14 +135,18 @@ struct ParticipateMeetingMessage {
     participate: bool,
 }
 
-#[post("/meeting/<id>/participants", data="<msg>", format = "json")]
+#[post("/meeting/<id>/participants", data = "<msg>", format = "json")]
 async fn meeting_participate(
     client: &State<sync::Arc<Client>>,
     user: User,
     id: u32,
     msg: Json<ParticipateMeetingMessage>,
 ) -> Result<Value, Error> {
-    eprintln!("meeting {id} user {} participate? {}", user.email(), msg.participate);
+    eprintln!(
+        "meeting {id} user {} participate? {}",
+        user.email(),
+        msg.participate
+    );
     let sql = if msg.participate {
         "
         insert into meeting_participants
@@ -157,7 +161,7 @@ async fn meeting_participate(
     };
     let id = id as i64;
     client.execute(sql, &[&id, &user.email()]).await.unwrap();
-    Ok(json!({"updated_meeting": id}))
+    Ok(json!({ "updated_meeting": id }))
 }
 
 #[post("/meetings", data = "<meeting>", format = "json")]
@@ -182,7 +186,7 @@ async fn add_new_meeting(
     ";
     // XXXdebug: remove unwrap when done debugging.
     client.execute(sql, &[&id, &user.email()]).await.unwrap();
-    Ok(json!({"inserted": id as u32}))
+    Ok(json!({ "inserted": id as u32 }))
 }
 
 #[post("/topics", data = "<topic>", format = "json")]
@@ -192,7 +196,9 @@ async fn add_new_topic(
     topic: Json<NewTopic<'_>>,
 ) -> Result<Value, Error> {
     let stmt = client.prepare(NEW_TOPIC).await?;
-    let rows = client.query(&stmt, &[&user.email(), &topic.new_topic]).await?;
+    let rows = client
+        .query(&stmt, &[&user.email(), &topic.new_topic])
+        .await?;
     let id = rows[0].get::<_, i64>(0);
     println!("new topic {} with id {id}", &topic.new_topic);
     let sql = "
@@ -203,7 +209,7 @@ async fn add_new_topic(
     ";
     // XXXdebug: remove unwrap when done debugging.
     client.execute(sql, &[&id, &user.email()]).await.unwrap();
-    Ok(json!({"inserted": id as u32}))
+    Ok(json!({ "inserted": id as u32 }))
 }
 
 #[delete("/meetings/<id>")]
@@ -289,6 +295,29 @@ struct ScoreMessage {
     score: u32,
 }
 
+#[get("/joined_meetings")]
+async fn get_joined_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
+    let stmt = client
+        .prepare(
+            "
+        select meeting from meeting_participants
+        where email = $1
+    ",
+        )
+        .await
+        .unwrap();
+    let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
+    let meetings: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let id = row.get::<_, i64>(0);
+            assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
+            id as u32
+        })
+        .collect();
+    json!({ "meetings": meetings })
+}
+
 #[get("/meetings")]
 async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
     let stmt = client.prepare(GET_SCORED_MEETINGS).await.unwrap();
@@ -315,9 +344,11 @@ async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
 #[get("/user_topics")]
 async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Value {
     let stmt = client
-        .prepare("
+        .prepare(
+            "
             select topic, id, score from user_topics where email = $1
-        ")
+        ",
+        )
         .await
         .unwrap();
     let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
@@ -402,6 +433,7 @@ async fn main() -> anyhow::Result<()> {
                 add_new_topic,
                 delete_meeting,
                 delete_topic,
+                get_joined_meetings,
                 get_meetings,
                 get_user_topics,
                 get_user_id,
