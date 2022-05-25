@@ -1,4 +1,7 @@
-use std::{boxed, collections::HashMap};
+use std::{
+    boxed,
+    collections::{HashMap, HashSet},
+};
 
 use anyhow::{anyhow, Error, Result};
 use gloo_net::http;
@@ -79,6 +82,8 @@ enum Msg {
     DidStoreMeetingScore,
     LogError(Error),
     MeetingDown(u32),
+    MeetingJoinChanged,
+    MeetingToggleJoin(u32),
     MeetingUp(u32),
     Noop,
     SetMeetings(HashMap<u32, (String, u32)>),
@@ -113,6 +118,7 @@ enum Tab {
 }
 
 struct Model {
+    joined_meetings: HashSet<u32>,
     meetings: HashMap<u32, (String, u32)>,
     new_meeting_text: String,
     new_topic_text: String,
@@ -291,6 +297,19 @@ async fn add_new_topic(topic_text: String) -> Result<http::Response> {
         .await?)
 }
 
+#[derive(Serialize)]
+struct ParticipateMeetingMessage {
+    participate: bool,
+}
+async fn join_meeting(id: boxed::Box<u32>, participate: bool) -> Result<http::Response> {
+    let id = *id;
+    let url = format!("https://localhost/meeting/{id}/participants");
+    Ok(gloo_net::http::Request::post(&url)
+        .json(&ParticipateMeetingMessage { participate })?
+        .send()
+        .await?)
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 struct UserIdMessage {
     email: String,
@@ -352,12 +371,23 @@ impl Model {
         meetings.sort_by(|(_a_id, _a_name, a_score), (_b_id, _b_name, b_score)| {
             b_score.partial_cmp(a_score).unwrap()
         });
+        let id_for_mtg = |id| format!("mtg{}", id);
         let meetings: Vec<_> = meetings.into_iter()
         .map(|(meeting_id, name, _score)| {
             html! {
                 <div class="row">
                     <div class="col">{ name }</div>
                     <div class="col">
+                        <input
+                            type={"checkbox"}
+                            class="form-check-input"
+                            id={ id_for_mtg(meeting_id) }
+                            checked={ self.joined_meetings.get(&meeting_id).is_some() }
+                            onclick={ctx.link().callback(move |_| Msg::MeetingToggleJoin(meeting_id))}
+                        />
+                        <label class="form-check-label" for={ id_for_mtg(meeting_id) }>
+                            {"Join"}
+                        </label>
                         <button
                             onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}
                             type={"button"}
@@ -462,6 +492,7 @@ impl Component for Model {
 
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
+            joined_meetings: HashSet::new(),
             meetings: HashMap::new(),
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
@@ -579,6 +610,27 @@ impl Component for Model {
                             });
                         }
                     }
+                }
+                true
+            }
+            Msg::MeetingJoinChanged => {
+                // could refresh participation info here, but worth it?
+                true
+            }
+            Msg::MeetingToggleJoin(id) => {
+                let boxed_id = boxed::Box::<u32>::new(id);
+                if self.joined_meetings.contains(&id) {
+                    self.joined_meetings.remove(&id);
+                    ctx.link().send_future(async {
+                        join_meeting(boxed_id, false).await.unwrap();
+                        Msg::MeetingJoinChanged
+                    });
+                } else {
+                    self.joined_meetings.insert(id);
+                    ctx.link().send_future(async {
+                        join_meeting(boxed_id, true).await.unwrap();
+                        Msg::MeetingJoinChanged
+                    });
                 }
                 true
             }

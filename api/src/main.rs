@@ -130,6 +130,36 @@ struct NewMeeting<'r> {
     name: Cow<'r, str>,
 }
 
+#[derive(Deserialize)]
+struct ParticipateMeetingMessage {
+    participate: bool,
+}
+
+#[post("/meeting/<id>/participants", data="<msg>", format = "json")]
+async fn meeting_participate(
+    client: &State<sync::Arc<Client>>,
+    user: User,
+    id: u32,
+    msg: Json<ParticipateMeetingMessage>,
+) -> Result<Value, Error> {
+    eprintln!("meeting {id} user {} participate? {}", user.email(), msg.participate);
+    let sql = if msg.participate {
+        "
+        insert into meeting_participants
+        (meeting, email) values
+        ($1, $2) on conflict do nothing
+        "
+    } else {
+        "
+        delete from meeting_participants
+        where email = $2 and meeting = $1
+        "
+    };
+    let id = id as i64;
+    client.execute(sql, &[&id, &user.email()]).await.unwrap();
+    Ok(json!({"updated_meeting": id}))
+}
+
 #[post("/meetings", data = "<meeting>", format = "json")]
 async fn add_new_meeting(
     client: &State<sync::Arc<Client>>,
@@ -376,6 +406,7 @@ async fn main() -> anyhow::Result<()> {
                 get_user_topics,
                 get_user_id,
                 get_login,
+                meeting_participate,
                 post_signup,
                 get_signup,
                 logout,
