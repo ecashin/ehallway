@@ -1,11 +1,11 @@
-use std::{borrow::Cow, fs};
+use std::fs;
 
 use anyhow::Context;
 use clap::Parser;
 use rocket::fs::FileServer;
 use rocket::serde::{
     json::{Json, Value},
-    {Deserialize, Serialize},
+    Deserialize,
 };
 use rocket::{delete, form::*, get, post, put, response::Redirect, routes, State};
 use rocket_auth::{prelude::Error, *};
@@ -14,6 +14,11 @@ use serde_json::json;
 use std::*;
 use std::{convert::TryInto, path::PathBuf, result::Result};
 use tokio_postgres::{connect, Client, NoTls};
+
+use ehall::{
+    JoinedMeetingsMessage, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
+    ParticipateMeetingMessage, ScoreMessage, UserTopic,
+};
 
 #[derive(Deserialize)]
 struct Config {
@@ -121,28 +126,11 @@ const NEW_TOPIC: &str = "
     returning id;
 ";
 
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
-struct NewTopic<'r> {
-    new_topic: Cow<'r, str>,
-}
-
 const NEW_MEETING: &str = "
     insert into meetings (name)
     values ($1)
     returning id;
 ";
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
-struct NewMeeting<'r> {
-    name: Cow<'r, str>,
-}
-
-#[derive(Deserialize)]
-struct ParticipateMeetingMessage {
-    participate: bool,
-}
 
 #[post("/meeting/<id>/participants", data = "<msg>", format = "json")]
 async fn meeting_participate(
@@ -202,7 +190,7 @@ async fn add_new_meeting(
 async fn add_new_topic(
     client: &State<sync::Arc<Client>>,
     user: User,
-    topic: Json<NewTopic<'_>>,
+    topic: Json<NewTopicMessage>,
 ) -> Result<Value, Error> {
     let stmt = client.prepare(NEW_TOPIC).await?;
     let rows = client
@@ -297,33 +285,11 @@ const GET_SCORED_MEETINGS: &str = "
     on meetings.id = q.id;
 ";
 
-#[derive(Serialize)]
-struct Meeting {
-    name: String,
-    id: u32,
-}
-
-#[derive(Serialize)]
-struct MeetingMessage {
-    meeting: Meeting,
-    score: u32,
-}
-
-#[derive(Serialize)]
-struct UserTopic {
-    text: String,
-    score: u32,
-    id: u32,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
-struct ScoreMessage {
-    score: u32,
-}
-
 #[get("/joined_meetings")]
-async fn get_joined_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
+async fn get_joined_meetings(
+    user: User,
+    client: &State<sync::Arc<Client>>,
+) -> Json<JoinedMeetingsMessage> {
     let stmt = client
         .prepare(
             "
@@ -342,7 +308,7 @@ async fn get_joined_meetings(user: User, client: &State<sync::Arc<Client>>) -> V
             id as u32
         })
         .collect();
-    json!({ "meetings": meetings })
+    JoinedMeetingsMessage { meetings }.into()
 }
 
 #[get("/meetings")]
