@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.56"
+# ehall = { version = "0.1.0", path = "../ehall" }
 getrandom = { version = "0.2.6", features = ["js"] }
 gloo-net = { version = "0.2.0", features = ["http"] }
 gloo-utils = "0.1.3"
