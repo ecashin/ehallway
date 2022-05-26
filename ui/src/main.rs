@@ -6,10 +6,14 @@ use std::{
 
 use anyhow::{anyhow, Error, Result};
 use gloo_net::http;
-use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::JsValue;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
+
+use ehall::{
+    JoinedMeetingsMessage, MeetingsMessage, NewMeeting, NewTopicMessage, ParticipateMeetingMessage,
+    ScoreMessage, UserIdMessage, UserTopic, UserTopicsMessage,
+};
 
 mod chance;
 mod cull;
@@ -154,35 +158,6 @@ fn error_from_response(resp: http::Response) -> Error {
     anyhow!("response status {status}: {}", resp.status_text())
 }
 
-#[derive(Clone, Debug, Deserialize, Hash, PartialEq, Eq)]
-struct Meeting {
-    name: String,
-    id: u32,
-}
-
-#[derive(Deserialize)]
-struct MeetingMessage {
-    meeting: Meeting,
-    score: u32,
-}
-
-#[derive(Clone, Deserialize)]
-struct UserTopic {
-    text: String,
-    score: u32,
-    id: u32,
-}
-
-#[derive(Deserialize)]
-struct MeetingsMessage {
-    meetings: Vec<MeetingMessage>,
-}
-
-#[derive(Deserialize)]
-struct UserTopicsMessage {
-    topics: Vec<UserTopic>,
-}
-
 async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
     let resp: std::result::Result<MeetingsMessage, gloo_net::Error> =
         http::Request::get("https://localhost/meetings")
@@ -211,10 +186,6 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
     }
 }
 
-#[derive(Deserialize)]
-struct JoinedMeetingsMessage {
-    meetings: Vec<u32>,
-}
 async fn fetch_joined_meetings() -> Result<Vec<u32>> {
     let resp: std::result::Result<JoinedMeetingsMessage, gloo_net::Error> =
         http::Request::get("https://localhost/joined_meetings")
@@ -262,11 +233,6 @@ async fn fetch_user_topics() -> Result<HashMap<u32, UserTopic>> {
     }
 }
 
-#[derive(Serialize)]
-struct NewTopic {
-    new_topic: String,
-}
-
 async fn delete_meeting(id: boxed::Box<u32>) -> Result<()> {
     let url = format!("https://localhost/meetings/{}", id);
     gloo_net::http::Request::delete(&url).send().await?;
@@ -279,10 +245,6 @@ async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
     Ok(())
 }
 
-#[derive(Serialize)]
-struct ScoreMessage {
-    score: u32,
-}
 async fn store_score(
     what: &str,
     meeting_id: boxed::Box<u32>,
@@ -296,17 +258,13 @@ async fn store_score(
     Ok(())
 }
 
-#[derive(Serialize)]
-struct AttendMeetingMessage {
-    id: u32,
-}
 async fn attend_meeting(meeting_id: boxed::Box<u32>) -> Result<http::Response> {
     let url = format!("https://localhost/meeting/{}/attendees", *meeting_id);
     Ok(gloo_net::http::Request::post(&url).send().await?)
 }
 
 async fn add_new_meeting(name: String) -> Result<http::Response> {
-    let new_meeting = ehall::NewMeeting {
+    let new_meeting = NewMeeting {
         name: Cow::from(name),
     };
     Ok(gloo_net::http::Request::post("https://localhost/meetings")
@@ -316,7 +274,7 @@ async fn add_new_meeting(name: String) -> Result<http::Response> {
 }
 
 async fn add_new_topic(topic_text: String) -> Result<http::Response> {
-    let topic = NewTopic {
+    let topic = NewTopicMessage {
         new_topic: topic_text,
     };
     Ok(gloo_net::http::Request::post("https://localhost/topics")
@@ -325,10 +283,6 @@ async fn add_new_topic(topic_text: String) -> Result<http::Response> {
         .await?)
 }
 
-#[derive(Serialize)]
-struct ParticipateMeetingMessage {
-    participate: bool,
-}
 async fn join_meeting(id: boxed::Box<u32>, participate: bool) -> Result<http::Response> {
     let id = *id;
     let url = format!("https://localhost/meeting/{id}/participants");
@@ -336,11 +290,6 @@ async fn join_meeting(id: boxed::Box<u32>, participate: bool) -> Result<http::Re
         .json(&ParticipateMeetingMessage { participate })?
         .send()
         .await?)
-}
-
-#[derive(Clone, Deserialize, PartialEq)]
-struct UserIdMessage {
-    email: String,
 }
 
 impl Model {
