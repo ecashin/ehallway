@@ -16,8 +16,8 @@ use std::{convert::TryInto, path::PathBuf, result::Result};
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    JoinedMeetingsMessage, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
-    ParticipateMeetingMessage, ScoreMessage, UserTopic,
+    Meeting, MeetingMessage, NewMeeting, NewTopicMessage, ParticipateMeetingMessage,
+    RegisteredMeetingsMessage, ScoreMessage, UserTopic,
 };
 
 #[derive(Deserialize)]
@@ -285,11 +285,11 @@ const GET_SCORED_MEETINGS: &str = "
     on meetings.id = q.id;
 ";
 
-#[get("/joined_meetings")]
-async fn get_joined_meetings(
+#[get("/registered_meetings")]
+async fn get_registered_meetings(
     user: User,
     client: &State<sync::Arc<Client>>,
-) -> Json<JoinedMeetingsMessage> {
+) -> Json<RegisteredMeetingsMessage> {
     let stmt = client
         .prepare(
             "
@@ -308,7 +308,7 @@ async fn get_joined_meetings(
             id as u32
         })
         .collect();
-    JoinedMeetingsMessage { meetings }.into()
+    RegisteredMeetingsMessage { meetings }.into()
 }
 
 #[get("/meetings")]
@@ -427,8 +427,8 @@ async fn main() -> anyhow::Result<()> {
                 attend_meeting,
                 delete_meeting,
                 delete_topic,
-                get_joined_meetings,
                 get_meetings,
+                get_registered_meetings,
                 get_user_topics,
                 get_user_id,
                 get_login,

@@ -11,8 +11,8 @@ use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 use ehall::{
-    JoinedMeetingsMessage, MeetingsMessage, NewMeeting, NewTopicMessage, ParticipateMeetingMessage,
-    ScoreMessage, UserIdMessage, UserTopic, UserTopicsMessage,
+    MeetingsMessage, NewMeeting, NewTopicMessage, ParticipateMeetingMessage,
+    RegisteredMeetingsMessage, ScoreMessage, UserIdMessage, UserTopic, UserTopicsMessage,
 };
 
 mod chance;
@@ -89,11 +89,11 @@ enum Msg {
     DidStoreMeetingScore,
     LogError(Error),
     MeetingDown(u32),
-    MeetingJoinChanged,
-    MeetingToggleJoin(u32),
+    MeetingRegisteredChanged,
+    MeetingToggleRegistered(u32),
     MeetingUp(u32),
     Noop,
-    SetJoinedMeetings(Vec<u32>),
+    SetRegisteredMeetings(Vec<u32>),
     SetMeetings(HashMap<u32, (String, u32)>),
     SetTab(Tab),
     SetUserId(String),
@@ -127,7 +127,7 @@ enum Tab {
 
 struct Model {
     attending_meeting: Option<u32>,
-    joined_meetings: HashSet<u32>,
+    registered_meetings: HashSet<u32>,
     meetings: HashMap<u32, (String, u32)>,
     new_meeting_text: String,
     new_topic_text: String,
@@ -186,9 +186,9 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
     }
 }
 
-async fn fetch_joined_meetings() -> Result<Vec<u32>> {
-    let resp: std::result::Result<JoinedMeetingsMessage, gloo_net::Error> =
-        http::Request::get("https://localhost/joined_meetings")
+async fn fetch_registered_meetings() -> Result<Vec<u32>> {
+    let resp: std::result::Result<RegisteredMeetingsMessage, gloo_net::Error> =
+        http::Request::get("https://localhost/registered_meetings")
             .send()
             .await?
             .json()
@@ -283,7 +283,7 @@ async fn add_new_topic(topic_text: String) -> Result<http::Response> {
         .await?)
 }
 
-async fn join_meeting(id: boxed::Box<u32>, participate: bool) -> Result<http::Response> {
+async fn register_for_meeting(id: boxed::Box<u32>, participate: bool) -> Result<http::Response> {
     let id = *id;
     let url = format!("https://localhost/meeting/{id}/participants");
     Ok(gloo_net::http::Request::post(&url)
@@ -311,8 +311,8 @@ impl Model {
             }
         });
         ctx.link().send_future(async {
-            if let Ok(meetings) = fetch_joined_meetings().await {
-                Msg::SetJoinedMeetings(meetings)
+            if let Ok(meetings) = fetch_registered_meetings().await {
+                Msg::SetRegisteredMeetings(meetings)
             } else {
                 Msg::Noop
             }
@@ -371,11 +371,11 @@ impl Model {
                             type={"checkbox"}
                             class="form-check-input"
                             id={ id_for_mtg(meeting_id) }
-                            checked={ self.joined_meetings.get(&meeting_id).is_some() }
-                            onclick={ctx.link().callback(move |_| Msg::MeetingToggleJoin(meeting_id))}
+                            checked={ self.registered_meetings.get(&meeting_id).is_some() }
+                            onclick={ctx.link().callback(move |_| Msg::MeetingToggleRegistered(meeting_id))}
                         />
                         <label class="form-check-label" for={ id_for_mtg(meeting_id) }>
-                            {"Join"}
+                            {"r"}
                         </label>
                         <button
                             onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}
@@ -482,7 +482,7 @@ impl Component for Model {
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
             attending_meeting: None,
-            joined_meetings: HashSet::new(),
+            registered_meetings: HashSet::new(),
             meetings: HashMap::new(),
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
@@ -618,23 +618,23 @@ impl Component for Model {
                 }
                 true
             }
-            Msg::MeetingJoinChanged => {
+            Msg::MeetingRegisteredChanged => {
                 // could refresh participation info here, but worth it?
                 true
             }
-            Msg::MeetingToggleJoin(id) => {
+            Msg::MeetingToggleRegistered(id) => {
                 let boxed_id = boxed::Box::<u32>::new(id);
-                if self.joined_meetings.contains(&id) {
-                    self.joined_meetings.remove(&id);
+                if self.registered_meetings.contains(&id) {
+                    self.registered_meetings.remove(&id);
                     ctx.link().send_future(async {
-                        join_meeting(boxed_id, false).await.unwrap();
-                        Msg::MeetingJoinChanged
+                        register_for_meeting(boxed_id, false).await.unwrap();
+                        Msg::MeetingRegisteredChanged
                     });
                 } else {
-                    self.joined_meetings.insert(id);
+                    self.registered_meetings.insert(id);
                     ctx.link().send_future(async {
-                        join_meeting(boxed_id, true).await.unwrap();
-                        Msg::MeetingJoinChanged
+                        register_for_meeting(boxed_id, true).await.unwrap();
+                        Msg::MeetingRegisteredChanged
                     });
                 }
                 true
@@ -659,8 +659,8 @@ impl Component for Model {
                 true
             }
             Msg::Noop => true,
-            Msg::SetJoinedMeetings(meetings) => {
-                self.joined_meetings = meetings.into_iter().collect();
+            Msg::SetRegisteredMeetings(meetings) => {
+                self.registered_meetings = meetings.into_iter().collect();
                 true
             }
             Msg::SetMeetings(meetings) => {
