@@ -133,12 +133,6 @@ const NEW_MEETING: &str = "
     returning id;
 ";
 
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
-struct NewMeeting<'r> {
-    name: Cow<'r, str>,
-}
-
 #[derive(Deserialize)]
 struct ParticipateMeetingMessage {
     participate: bool,
@@ -177,7 +171,7 @@ async fn meeting_participate(
 async fn add_new_meeting(
     client: &State<sync::Arc<Client>>,
     user: User,
-    meeting: Json<NewMeeting<'_>>,
+    meeting: Json<ehall::NewMeeting<'_>>,
 ) -> Result<Value, Error> {
     let stmt = client.prepare(NEW_MEETING).await?;
     let rows = client.query(&stmt, &[&meeting.name]).await?;

@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     boxed,
     collections::{HashMap, HashSet},
 };
@@ -262,11 +263,6 @@ async fn fetch_user_topics() -> Result<HashMap<u32, UserTopic>> {
 }
 
 #[derive(Serialize)]
-struct NewMeeting {
-    name: String,
-}
-
-#[derive(Serialize)]
 struct NewTopic {
     new_topic: String,
 }
@@ -310,7 +306,9 @@ async fn attend_meeting(meeting_id: boxed::Box<u32>) -> Result<http::Response> {
 }
 
 async fn add_new_meeting(name: String) -> Result<http::Response> {
-    let new_meeting = NewMeeting { name };
+    let new_meeting = ehall::NewMeeting {
+        name: Cow::from(name),
+    };
     Ok(gloo_net::http::Request::post("https://localhost/meetings")
         .json(&new_meeting)?
         .send()
