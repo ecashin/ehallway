@@ -77,6 +77,8 @@ enum Msg {
     AddTopic,
     AddedMeeting,
     AddedTopic,
+    AttendingMeeting(boxed::Box<u32>),
+    AttendMeeting(u32),
     DeleteMeeting(u32),
     DeleteTopic(u32),
     DidStoreMeetingScore,
@@ -119,6 +121,7 @@ enum Tab {
 }
 
 struct Model {
+    attending_meeting: Option<u32>,
     joined_meetings: HashSet<u32>,
     meetings: HashMap<u32, (String, u32)>,
     new_meeting_text: String,
@@ -297,6 +300,15 @@ async fn store_score(
     Ok(())
 }
 
+#[derive(Serialize)]
+struct AttendMeetingMessage {
+    id: u32,
+}
+async fn attend_meeting(meeting_id: boxed::Box<u32>) -> Result<http::Response> {
+    let url = format!("https://localhost/meeting/{}/attendees", *meeting_id);
+    Ok(gloo_net::http::Request::post(&url).send().await?)
+}
+
 async fn add_new_meeting(name: String) -> Result<http::Response> {
     let new_meeting = NewMeeting { name };
     Ok(gloo_net::http::Request::post("https://localhost/meetings")
@@ -403,6 +415,11 @@ impl Model {
                 <div class="row">
                     <div class="col">{ name }</div>
                     <div class="col">
+                        <button
+                            onclick={ctx.link().callback(move |_| Msg::AttendMeeting(meeting_id))}
+                            type={"button"}
+                            class={"btn"}
+                        >{"attend"}</button>
                         <input
                             type={"checkbox"}
                             class="form-check-input"
@@ -517,6 +534,7 @@ impl Component for Model {
 
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
+            attending_meeting: None,
             joined_meetings: HashSet::new(),
             meetings: HashMap::new(),
             new_meeting_text: "".to_owned(),
@@ -581,6 +599,21 @@ impl Component for Model {
                                 Msg::LogError(error_from_response(resp))
                             }
                         }
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
+            Msg::AttendingMeeting(id) => {
+                self.attending_meeting = Some(*id);
+                self.active_tab = Tab::MeetingPrep;
+                true
+            }
+            Msg::AttendMeeting(id) => {
+                let id = boxed::Box::new(id);
+                ctx.link().send_future(async {
+                    match attend_meeting(id.clone()).await {
+                        Ok(_) => Msg::AttendingMeeting(id),
                         Err(e) => Msg::LogError(e),
                     }
                 });

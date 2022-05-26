@@ -71,7 +71,7 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_TABLES: [&str; 5] = [
+const CREATE_TABLES: [&str; 7] = [
     "
     create table if not exists user_topics (
         email varchar (254) not null,
@@ -85,6 +85,16 @@ const CREATE_TABLES: [&str; 5] = [
         name varchar (254) primary key,
         id bigserial
     );
+    ",
+    "
+    create table if not exists meeting_attendees (
+        meeting bigint not null,
+        email varchar (254) not null
+    );
+    ",
+    "
+    create unique index if not exists user_mtg_attendee_idx
+    on meeting_attendees (meeting, email);
     ",
     "
     create table if not exists meeting_participants (
@@ -101,8 +111,7 @@ const CREATE_TABLES: [&str; 5] = [
     ",
     "
     create unique index if not exists user_mtg_score_idx
-    on meeting_scores
-    (meeting, email);
+    on meeting_scores (meeting, email);
     ",
 ];
 
@@ -212,6 +221,24 @@ async fn add_new_topic(
     Ok(json!({ "inserted": id as u32 }))
 }
 
+#[post("/meeting/<id>/attendees")]
+async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
+    let identifier = id as i64;
+    client
+        .execute(
+            "
+            insert into meeting_attendees
+            (meeting, email)
+            values
+            ($1, $2)
+            on conflict (meeting, email) do nothing
+        ",
+            &[&identifier, &user.email()],
+        )
+        .await
+        .unwrap();
+    json!({ "attending": id })
+}
 #[delete("/meetings/<id>")]
 async fn delete_meeting(_user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
     let identifier = id as i64;
@@ -431,6 +458,7 @@ async fn main() -> anyhow::Result<()> {
                 index,
                 add_new_meeting,
                 add_new_topic,
+                attend_meeting,
                 delete_meeting,
                 delete_topic,
                 get_joined_meetings,
