@@ -327,6 +327,7 @@ impl Model {
         let new_meeting = if let UserIdState::Fetched(_uid) = &self.user_id {
             html! {
                 <div>
+                    <label>{"Add new meeting"}</label>
                     <input
                         id="new-meeting"
                         type="text"
@@ -355,43 +356,61 @@ impl Model {
         meetings.sort_by(|(_a_id, _a_name, a_score), (_b_id, _b_name, b_score)| {
             b_score.partial_cmp(a_score).unwrap()
         });
-        let id_for_mtg = |id| format!("mtg{}", id);
         let meetings: Vec<_> = meetings.into_iter()
         .map(|(meeting_id, name, _score)| {
+            let is_registered = self.registered_meetings.get(&meeting_id).is_some();
+            let register_toggle_class = if is_registered {
+                "btn btn-secondary active"
+            } else {
+                "btn btn-secondary"
+            };
             html! {
                 <div class="row">
                     <div class="col">{ name }</div>
                     <div class="col">
-                        <button
-                            onclick={ctx.link().callback(move |_| Msg::AttendMeeting(meeting_id))}
-                            type={"button"}
-                            class={"btn"}
-                        >{"attend"}</button>
-                        <input
-                            type={"checkbox"}
-                            class="form-check-input"
-                            id={ id_for_mtg(meeting_id) }
-                            checked={ self.registered_meetings.get(&meeting_id).is_some() }
-                            onclick={ctx.link().callback(move |_| Msg::MeetingToggleRegistered(meeting_id))}
-                        />
-                        <label class="form-check-label" for={ id_for_mtg(meeting_id) }>
-                            {"r"}
-                        </label>
-                        <button
-                            onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}
-                            type={"button"}
-                            class={"btn"}
-                        >{ up_arrow() }</button>
-                        <button
-                            onclick={ctx.link().callback(move |_| Msg::MeetingDown(meeting_id))}
-                            type={"button"}
-                            class={"btn"}
-                        >{ down_arrow() }</button>
-                        <button
-                            onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(meeting_id))}
-                            type={"button"}
-                            class={"btn"}
-                        >{ x_icon() }</button>
+                        <div class={"container"}>
+                            <div class={"row"}>
+                                <div class="col">
+                                    <button
+                                        onclick={ctx.link().callback(move |_| Msg::AttendMeeting(meeting_id))}
+                                        type={"button"}
+                                        class={"btn btn-secondary"}
+                                    >{"attend"}</button>
+                                </div>
+                                <div class="col">
+                                    <div class={"btn-group-toggle"} data-toggle={"buttons"}>
+                                        <label class={register_toggle_class}>
+                                            <input
+                                                type={"checkbox"}
+                                                checked={ is_registered }
+                                                autocomplete={"off"}
+                                                onclick={ctx.link().callback(move |_| Msg::MeetingToggleRegistered(meeting_id))}
+                                            />
+                                            {"Register"}
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <button
+                                    onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}
+                                    type={"button"}
+                                    class={"btn"}
+                                    >{ up_arrow() }</button>
+                                    <button
+                                    onclick={ctx.link().callback(move |_| Msg::MeetingDown(meeting_id))}
+                                    type={"button"}
+                                    class={"btn"}
+                                    >{ down_arrow() }</button>
+                                </div>
+                                <div class="col">
+                                    <button
+                                    onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(meeting_id))}
+                                    type={"button"}
+                                    class={"btn"}
+                                    >{ x_icon() }</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             }
@@ -402,11 +421,6 @@ impl Model {
             <div>
                 {new_meeting}
                 <div class="container">
-                    <div class="col">
-                        { "Meetings" }
-                    </div>
-                    <div class="col">
-                    </div>
                     {meetings}
                 </div>
             </div>
