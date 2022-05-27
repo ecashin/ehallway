@@ -87,6 +87,7 @@ enum Msg {
     DeleteMeeting(u32),
     DeleteTopic(u32),
     DidStoreMeetingScore,
+    LeaveMeeting,
     LogError(Error),
     MeetingDown(u32),
     MeetingRegisteredChanged,
@@ -319,6 +320,22 @@ impl Model {
         });
     }
 
+    fn meeting_attendance_html(&self, ctx: &Context<Self>) -> Html {
+        let meeting_id = self.attending_meeting.unwrap();
+        let meeting_name = &self.meetings.get(&meeting_id).unwrap().0;
+        html! {
+            <div class="container">
+                <div class="row">
+                    <h2>{ format!("Attending meeting: {}", meeting_name) }</h2>
+                    <button
+                        onclick={ctx.link().callback(move |_| Msg::LeaveMeeting)}
+                        type={"button"}
+                        class={"btn btn-secondary"}
+                    >{"leave"}</button>
+                </div>
+            </div>
+        }
+    }
     fn meeting_management_html(&self, ctx: &Context<Self>) -> Html {
         let onkeypress = ctx
             .link()
@@ -374,9 +391,10 @@ impl Model {
                                 <div class="col">
                                     <button
                                         onclick={ctx.link().callback(move |_| Msg::AttendMeeting(meeting_id))}
+                                        disabled={!is_registered}
                                         type={"button"}
                                         class={"btn btn-secondary"}
-                                    >{"attend"}</button>
+                                    >{"join now"}</button>
                                 </div>
                                 <div class="col">
                                     <input
@@ -609,6 +627,11 @@ impl Component for Model {
                         Err(e) => Msg::LogError(e),
                     }
                 });
+                true
+            }
+            Msg::LeaveMeeting => {
+                self.attending_meeting = None;
+                self.active_tab = Tab::MeetingManagement;
                 true
             }
             Msg::LogError(e) => {
@@ -856,7 +879,9 @@ impl Component for Model {
                         Tab::MeetingManagement => {
                             self.meeting_management_html(ctx)
                         }
-                        Tab::MeetingPrep => html!{}
+                        Tab::MeetingPrep => html!{
+                            self.meeting_attendance_html(ctx)
+                        }
                     }
                 }
             </div>
