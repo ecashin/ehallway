@@ -359,8 +359,9 @@ impl Model {
         let meetings: Vec<_> = meetings.into_iter()
         .map(|(meeting_id, name, _score)| {
             let is_registered = self.registered_meetings.get(&meeting_id).is_some();
-            let register_toggle_class = if is_registered {
-                "btn btn-secondary active"
+            let register_id = format!("register{meeting_id}");
+            let register_class = if is_registered {
+                "btn btn-primary"
             } else {
                 "btn btn-secondary"
             };
@@ -378,17 +379,18 @@ impl Model {
                                     >{"attend"}</button>
                                 </div>
                                 <div class="col">
-                                    <div class={"btn-group-toggle"} data-toggle={"buttons"}>
-                                        <label class={register_toggle_class}>
-                                            <input
-                                                type={"checkbox"}
-                                                checked={ is_registered }
-                                                autocomplete={"off"}
-                                                onclick={ctx.link().callback(move |_| Msg::MeetingToggleRegistered(meeting_id))}
-                                            />
-                                            {"Register"}
-                                        </label>
-                                    </div>
+                                    <input
+                                        id={register_id.clone()}
+                                        class="btn-check"
+                                        type={"checkbox"}
+                                        checked={ is_registered }
+                                        autocomplete={"off"}
+                                        onclick={ctx.link().callback(move |_| Msg::MeetingToggleRegistered(meeting_id))}
+                                    />
+                                    <label
+                                        class={register_class}
+                                        for={register_id}>{"register"}
+                                    </label>
                                 </div>
                                 <div class="col">
                                     <button
