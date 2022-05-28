@@ -88,6 +88,7 @@ enum Msg {
     DeleteMeeting(u32),
     DeleteTopic(u32),
     DidStoreMeetingScore,
+    FetchNMeetingParticipants(u32),
     LeaveMeeting,
     LogError(Error),
     MeetingDown(u32),
@@ -342,7 +343,20 @@ impl Model {
             let join_info_html = if let Some(n_registered) = self.n_attending_meeting_registered {
                 let n_joined = self.n_attending_meeting_joined.unwrap();
                 html! {
-                    <h3>{format!("{n_joined} of {n_registered} registered participants have joined")}</h3>
+                    <div class="container">
+                        <div class="row">
+                            <div class="col">
+                                <h3>{format!("{n_joined} of {n_registered} registered participants have joined")}</h3>
+                            </div>
+                            <div class="col">
+                                <button
+                                    type="button"
+                                    onclick={ctx.link().callback(move |_| Msg::FetchNMeetingParticipants(meeting_id))}
+                                    class="btn btn-secondary"
+                                >{"refresh"}</button>
+                            </div>
+                        </div>
+                    </div>
                 }
             } else {
                 html! {}
@@ -659,6 +673,19 @@ impl Component for Model {
                 });
                 true
             }
+            Msg::FetchNMeetingParticipants(meeting_id) => {
+                let id = boxed::Box::new(meeting_id);
+                ctx.link().send_future(async {
+                    match fetch_n_meeting_participants(id).await {
+                        Ok(MeetingParticipantsMessage {
+                            n_joined,
+                            n_registered,
+                        }) => Msg::SetNRegisteredNJoined((n_registered, n_joined)),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
             Msg::LeaveMeeting => {
                 self.attending_meeting = None;
                 self.active_tab = Tab::MeetingManagement;
@@ -746,16 +773,8 @@ impl Component for Model {
                 self.active_tab = tab.clone();
                 if let Some(meeting_id) = self.attending_meeting {
                     if tab == Tab::MeetingPrep && tab != prev_tab {
-                        let id = boxed::Box::new(meeting_id);
-                        ctx.link().send_future(async {
-                            match fetch_n_meeting_participants(id).await {
-                                Ok(MeetingParticipantsMessage {
-                                    n_joined,
-                                    n_registered,
-                                }) => Msg::SetNRegisteredNJoined((n_registered, n_joined)),
-                                Err(e) => Msg::LogError(e),
-                            }
-                        });
+                        ctx.link()
+                            .send_message(Msg::FetchNMeetingParticipants(meeting_id));
                     }
                 }
                 true
