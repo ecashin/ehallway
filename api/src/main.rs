@@ -324,9 +324,16 @@ async fn get_meeting_topics(
     let stmt = client
         .prepare(
             "
-            select topic, id, score from user_topics where email in
-            (select distinct email from meeting_attendees
-                where meeting = $1)
+            select topic, id, 0 from
+                (select row_number()
+                    over (partition by email order by score desc)
+                as r, t.* from user_topics t
+                    where t.email in
+                        (select distinct email from meeting_attendees
+                            where meeting = $1)
+                ) x
+            where x.r <= 3
+            order by random()
             ",
         )
         .await
@@ -334,14 +341,15 @@ async fn get_meeting_topics(
     let rows = client.query(&stmt, &[&id]).await.unwrap();
     let topics: Vec<_> = rows
         .iter()
-        .map(|row| {
+        .enumerate()
+        .map(|(i, row)| {
             let text = row.get::<_, String>(0);
             let id = row.get::<_, i64>(1);
-            let score = row.get::<_, i32>(2);
+            let score = i as u32;
             assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
             UserTopic {
                 text,
-                score: score as u32,
+                score,
                 id: id as u32,
             }
         })
