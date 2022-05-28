@@ -2,15 +2,15 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
-pub struct JoinedMeetingsMessage {
-    pub meetings: Vec<u32>,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct Meeting {
     pub name: String,
     pub id: u32,
+}
+#[derive(Serialize, Deserialize)]
+pub struct MeetingParticipantsMessage {
+    pub n_joined: u32,
+    pub n_registered: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -29,14 +29,19 @@ pub struct NewMeeting<'r> {
     pub name: Cow<'r, str>,
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct NewTopicMessage {
+    pub new_topic: String,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct ParticipateMeetingMessage {
     pub participate: bool,
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct NewTopicMessage {
-    pub new_topic: String,
+#[derive(Serialize, Deserialize)]
+pub struct RegisteredMeetingsMessage {
+    pub meetings: Vec<u32>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -56,7 +61,7 @@ pub struct UserTopic {
     pub id: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct UserTopicsMessage {
     pub topics: Vec<UserTopic>,
 }

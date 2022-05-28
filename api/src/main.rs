@@ -16,8 +16,9 @@ use std::{convert::TryInto, path::PathBuf, result::Result};
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    JoinedMeetingsMessage, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
-    ParticipateMeetingMessage, ScoreMessage, UserTopic,
+    Meeting, MeetingMessage, MeetingParticipantsMessage, NewMeeting, NewTopicMessage,
+    ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserTopic,
+    UserTopicsMessage,
 };
 
 #[derive(Deserialize)]
@@ -285,11 +286,82 @@ const GET_SCORED_MEETINGS: &str = "
     on meetings.id = q.id;
 ";
 
-#[get("/joined_meetings")]
-async fn get_joined_meetings(
+#[get("/meeting/<id>/participant_counts")]
+async fn get_meeting_participants(
+    _user: User,
+    client: &State<sync::Arc<Client>>,
+    id: u32,
+) -> Json<MeetingParticipantsMessage> {
+    let sql = "
+        select (
+            select count(*) from meeting_attendees
+            where meeting = $1
+        ) as n_joined,
+        (select count(*) from meeting_participants
+            where meeting = $1
+        ) as n_registered
+    ";
+    let id = id as i64;
+    let stmt = client.prepare(sql).await.unwrap();
+    let rows = client.query(&stmt, &[&id]).await.unwrap();
+    let row = rows.get(0).unwrap();
+    let n_joined = row.get::<_, i64>(0);
+    let n_registered = row.get::<_, i64>(1);
+    MeetingParticipantsMessage {
+        n_joined: n_joined as u32,
+        n_registered: n_registered as u32,
+    }
+    .into()
+}
+
+#[get("/meeting/<id>/topics")]
+async fn get_meeting_topics(
+    _user: User,
+    client: &State<sync::Arc<Client>>,
+    id: u32,
+) -> Json<UserTopicsMessage> {
+    let id = id as i64;
+    let stmt = client
+        .prepare(
+            "
+            select topic, id, 0 from
+                (select row_number()
+                    over (partition by email order by score desc)
+                as r, t.* from user_topics t
+                    where t.email in
+                        (select distinct email from meeting_attendees
+                            where meeting = $1)
+                ) x
+            where x.r <= 3
+            order by random()
+            ",
+        )
+        .await
+        .unwrap();
+    let rows = client.query(&stmt, &[&id]).await.unwrap();
+    let topics: Vec<_> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let text = row.get::<_, String>(0);
+            let id = row.get::<_, i64>(1);
+            let score = i as u32;
+            assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
+            UserTopic {
+                text,
+                score,
+                id: id as u32,
+            }
+        })
+        .collect();
+    UserTopicsMessage { topics }.into()
+}
+
+#[get("/registered_meetings")]
+async fn get_registered_meetings(
     user: User,
     client: &State<sync::Arc<Client>>,
-) -> Json<JoinedMeetingsMessage> {
+) -> Json<RegisteredMeetingsMessage> {
     let stmt = client
         .prepare(
             "
@@ -308,7 +380,7 @@ async fn get_joined_meetings(
             id as u32
         })
         .collect();
-    JoinedMeetingsMessage { meetings }.into()
+    RegisteredMeetingsMessage { meetings }.into()
 }
 
 #[get("/meetings")]
@@ -335,7 +407,7 @@ async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
 }
 
 #[get("/user_topics")]
-async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Value {
+async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Json<UserTopicsMessage> {
     let stmt = client
         .prepare(
             "
@@ -359,7 +431,7 @@ async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Value
             }
         })
         .collect();
-    json!({ "topics": topics })
+    UserTopicsMessage { topics }.into()
 }
 
 #[get("/user_id")]
@@ -427,8 +499,10 @@ async fn main() -> anyhow::Result<()> {
                 attend_meeting,
                 delete_meeting,
                 delete_topic,
-                get_joined_meetings,
+                get_meeting_participants,
+                get_meeting_topics,
                 get_meetings,
+                get_registered_meetings,
                 get_user_topics,
                 get_user_id,
                 get_login,

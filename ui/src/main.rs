@@ -11,8 +11,9 @@ use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 use ehall::{
-    JoinedMeetingsMessage, MeetingsMessage, NewMeeting, NewTopicMessage, ParticipateMeetingMessage,
-    ScoreMessage, UserIdMessage, UserTopic, UserTopicsMessage,
+    MeetingParticipantsMessage, MeetingsMessage, NewMeeting, NewTopicMessage,
+    ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserIdMessage, UserTopic,
+    UserTopicsMessage,
 };
 
 mod chance;
@@ -87,14 +88,19 @@ enum Msg {
     DeleteMeeting(u32),
     DeleteTopic(u32),
     DidStoreMeetingScore,
+    FetchNMeetingParticipants(u32),
+    FetchMeetingTopics(u32),
+    LeaveMeeting,
     LogError(Error),
     MeetingDown(u32),
-    MeetingJoinChanged,
-    MeetingToggleJoin(u32),
+    MeetingRegisteredChanged,
+    MeetingToggleRegistered(u32),
     MeetingUp(u32),
     Noop,
-    SetJoinedMeetings(Vec<u32>),
+    SetNRegisteredNJoined((u32, u32)),
+    SetRegisteredMeetings(Vec<u32>),
     SetMeetings(HashMap<u32, (String, u32)>),
+    SetMeetingTopics(Vec<UserTopic>),
     SetTab(Tab),
     SetUserId(String),
     SetUserTopics(HashMap<u32, UserTopic>), // set in Model
@@ -118,7 +124,7 @@ impl UserIdState {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 enum Tab {
     MeetingManagement,
     MeetingPrep,
@@ -127,7 +133,10 @@ enum Tab {
 
 struct Model {
     attending_meeting: Option<u32>,
-    joined_meetings: HashSet<u32>,
+    n_attending_meeting_registered: Option<u32>,
+    n_attending_meeting_joined: Option<u32>,
+    registered_meetings: HashSet<u32>,
+    meeting_topics: Option<Vec<UserTopic>>,
     meetings: HashMap<u32, (String, u32)>,
     new_meeting_text: String,
     new_topic_text: String,
@@ -186,15 +195,53 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
     }
 }
 
-async fn fetch_joined_meetings() -> Result<Vec<u32>> {
-    let resp: std::result::Result<JoinedMeetingsMessage, gloo_net::Error> =
-        http::Request::get("https://localhost/joined_meetings")
+async fn fetch_n_meeting_participants(
+    meeting_id: boxed::Box<u32>,
+) -> Result<MeetingParticipantsMessage> {
+    let url = format!("https://localhost/meeting/{meeting_id}/participant_counts");
+    let resp: std::result::Result<MeetingParticipantsMessage, gloo_net::Error> =
+        http::Request::get(&url).send().await?.json().await;
+    match resp {
+        Ok(msg) => Ok(msg),
+        Err(e) => Err(e.into()),
+    }
+}
+
+async fn fetch_registered_meetings() -> Result<Vec<u32>> {
+    let resp: std::result::Result<RegisteredMeetingsMessage, gloo_net::Error> =
+        http::Request::get("https://localhost/registered_meetings")
             .send()
             .await?
             .json()
             .await;
     match resp {
         Ok(msg) => Ok(msg.meetings),
+        Err(e) => Err(e.into()),
+    }
+}
+
+async fn fetch_meeting_topics(meeting_id: boxed::Box<u32>) -> Result<Vec<UserTopic>> {
+    let url = format!("https://localhost/meeting/{meeting_id}/topics");
+    let resp: std::result::Result<UserTopicsMessage, gloo_net::Error> =
+        http::Request::get(&url).send().await?.json().await;
+    match resp {
+        Ok(msg) => {
+            let mut topics = msg.topics;
+            topics.sort_by(|a, b| {
+                let UserTopic { score: a_score, .. } = a;
+                let UserTopic { score: b_score, .. } = b;
+                a_score.partial_cmp(b_score).unwrap()
+            });
+            Ok(topics
+                .into_iter()
+                .enumerate()
+                .map(|(score, UserTopic { text, id, .. })| UserTopic {
+                    id,
+                    text,
+                    score: score as u32,
+                })
+                .collect())
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -283,7 +330,7 @@ async fn add_new_topic(topic_text: String) -> Result<http::Response> {
         .await?)
 }
 
-async fn join_meeting(id: boxed::Box<u32>, participate: bool) -> Result<http::Response> {
+async fn register_for_meeting(id: boxed::Box<u32>, participate: bool) -> Result<http::Response> {
     let id = *id;
     let url = format!("https://localhost/meeting/{id}/participants");
     Ok(gloo_net::http::Request::post(&url)
@@ -311,14 +358,76 @@ impl Model {
             }
         });
         ctx.link().send_future(async {
-            if let Ok(meetings) = fetch_joined_meetings().await {
-                Msg::SetJoinedMeetings(meetings)
+            if let Ok(meetings) = fetch_registered_meetings().await {
+                Msg::SetRegisteredMeetings(meetings)
             } else {
                 Msg::Noop
             }
         });
     }
 
+    fn meeting_attendance_html(&self, ctx: &Context<Self>) -> Html {
+        if let Some(meeting_id) = self.attending_meeting {
+            let meeting_name = &self.meetings.get(&meeting_id).unwrap().0;
+            let join_info_html = if let Some(n_registered) = self.n_attending_meeting_registered {
+                let n_joined = self.n_attending_meeting_joined.unwrap();
+                html! {
+                    <div class="container">
+                        <div class="row">
+                            <div class="col">
+                                <h3>{format!("{n_joined} of {n_registered} registered participants have joined")}</h3>
+                            </div>
+                            <div class="col">
+                                <button
+                                    type="button"
+                                    onclick={ctx.link().callback(move |_| Msg::FetchNMeetingParticipants(meeting_id))}
+                                    class="btn btn-secondary"
+                                >{"refresh"}</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            } else {
+                html! {}
+            };
+            let meeting_topics_html = if let Some(topics) = &self.meeting_topics {
+                let items: Vec<_> = topics
+                    .iter()
+                    .map(|topic| {
+                        let txt = topic.text.clone();
+                        html! {
+                            <li>{ txt }</li>
+                        }
+                    })
+                    .collect();
+                html! {
+                    <ul>
+                        { items }
+                    </ul>
+                }
+            } else {
+                html! {}
+            };
+            html! {
+                <div class="container">
+                    <div class="row">
+                        <h2>{ format!("Attending meeting: {}", meeting_name) }</h2>
+                        {join_info_html}
+                        <button
+                            onclick={ctx.link().callback(move |_| Msg::LeaveMeeting)}
+                            type={"button"}
+                            class={"btn btn-secondary"}
+                        >{"leave"}</button>
+                    </div>
+                    <div class="row">
+                        { meeting_topics_html }
+                    </div>
+                </div>
+            }
+        } else {
+            html! {}
+        }
+    }
     fn meeting_management_html(&self, ctx: &Context<Self>) -> Html {
         let onkeypress = ctx
             .link()
@@ -327,6 +436,7 @@ impl Model {
         let new_meeting = if let UserIdState::Fetched(_uid) = &self.user_id {
             html! {
                 <div>
+                    <label>{"Add new meeting"}</label>
                     <input
                         id="new-meeting"
                         type="text"
@@ -355,43 +465,64 @@ impl Model {
         meetings.sort_by(|(_a_id, _a_name, a_score), (_b_id, _b_name, b_score)| {
             b_score.partial_cmp(a_score).unwrap()
         });
-        let id_for_mtg = |id| format!("mtg{}", id);
         let meetings: Vec<_> = meetings.into_iter()
         .map(|(meeting_id, name, _score)| {
+            let is_registered = self.registered_meetings.get(&meeting_id).is_some();
+            let register_id = format!("register{meeting_id}");
+            let register_class = if is_registered {
+                "btn btn-primary"
+            } else {
+                "btn btn-secondary"
+            };
             html! {
                 <div class="row">
                     <div class="col">{ name }</div>
                     <div class="col">
-                        <button
-                            onclick={ctx.link().callback(move |_| Msg::AttendMeeting(meeting_id))}
-                            type={"button"}
-                            class={"btn"}
-                        >{"attend"}</button>
-                        <input
-                            type={"checkbox"}
-                            class="form-check-input"
-                            id={ id_for_mtg(meeting_id) }
-                            checked={ self.joined_meetings.get(&meeting_id).is_some() }
-                            onclick={ctx.link().callback(move |_| Msg::MeetingToggleJoin(meeting_id))}
-                        />
-                        <label class="form-check-label" for={ id_for_mtg(meeting_id) }>
-                            {"Join"}
-                        </label>
-                        <button
-                            onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}
-                            type={"button"}
-                            class={"btn"}
-                        >{ up_arrow() }</button>
-                        <button
-                            onclick={ctx.link().callback(move |_| Msg::MeetingDown(meeting_id))}
-                            type={"button"}
-                            class={"btn"}
-                        >{ down_arrow() }</button>
-                        <button
-                            onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(meeting_id))}
-                            type={"button"}
-                            class={"btn"}
-                        >{ x_icon() }</button>
+                        <div class={"container"}>
+                            <div class={"row"}>
+                                <div class="col">
+                                    <button
+                                        onclick={ctx.link().callback(move |_| Msg::AttendMeeting(meeting_id))}
+                                        disabled={!is_registered}
+                                        type={"button"}
+                                        class={"btn btn-secondary"}
+                                    >{"join now"}</button>
+                                </div>
+                                <div class="col">
+                                    <input
+                                        id={register_id.clone()}
+                                        class="btn-check"
+                                        type={"checkbox"}
+                                        checked={ is_registered }
+                                        autocomplete={"off"}
+                                        onclick={ctx.link().callback(move |_| Msg::MeetingToggleRegistered(meeting_id))}
+                                    />
+                                    <label
+                                        class={register_class}
+                                        for={register_id}>{"register"}
+                                    </label>
+                                </div>
+                                <div class="col">
+                                    <button
+                                    onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}
+                                    type={"button"}
+                                    class={"btn"}
+                                    >{ up_arrow() }</button>
+                                    <button
+                                    onclick={ctx.link().callback(move |_| Msg::MeetingDown(meeting_id))}
+                                    type={"button"}
+                                    class={"btn"}
+                                    >{ down_arrow() }</button>
+                                </div>
+                                <div class="col">
+                                    <button
+                                    onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(meeting_id))}
+                                    type={"button"}
+                                    class={"btn"}
+                                    >{ x_icon() }</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             }
@@ -402,11 +533,6 @@ impl Model {
             <div>
                 {new_meeting}
                 <div class="container">
-                    <div class="col">
-                        { "Meetings" }
-                    </div>
-                    <div class="col">
-                    </div>
                     {meetings}
                 </div>
             </div>
@@ -482,8 +608,11 @@ impl Component for Model {
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
             attending_meeting: None,
-            joined_meetings: HashSet::new(),
+            registered_meetings: HashSet::new(),
+            meeting_topics: None,
             meetings: HashMap::new(),
+            n_attending_meeting_joined: None,
+            n_attending_meeting_registered: None,
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
             user_id: UserIdState::New,
@@ -553,7 +682,7 @@ impl Component for Model {
             }
             Msg::AttendingMeeting(id) => {
                 self.attending_meeting = Some(*id);
-                self.active_tab = Tab::MeetingPrep;
+                ctx.link().send_message(Msg::SetTab(Tab::MeetingPrep));
                 true
             }
             Msg::AttendMeeting(id) => {
@@ -595,6 +724,34 @@ impl Component for Model {
                 });
                 true
             }
+            Msg::FetchNMeetingParticipants(meeting_id) => {
+                let id = boxed::Box::new(meeting_id);
+                ctx.link().send_future(async {
+                    match fetch_n_meeting_participants(id).await {
+                        Ok(MeetingParticipantsMessage {
+                            n_joined,
+                            n_registered,
+                        }) => Msg::SetNRegisteredNJoined((n_registered, n_joined)),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
+            Msg::FetchMeetingTopics(meeting_id) => {
+                let id = boxed::Box::new(meeting_id);
+                ctx.link().send_future(async {
+                    match fetch_meeting_topics(id).await {
+                        Ok(topics) => Msg::SetMeetingTopics(topics),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
+            Msg::LeaveMeeting => {
+                self.attending_meeting = None;
+                self.active_tab = Tab::MeetingManagement;
+                true
+            }
             Msg::LogError(e) => {
                 js::console_log(JsValue::from(format!("{e}")));
                 true
@@ -618,23 +775,23 @@ impl Component for Model {
                 }
                 true
             }
-            Msg::MeetingJoinChanged => {
+            Msg::MeetingRegisteredChanged => {
                 // could refresh participation info here, but worth it?
                 true
             }
-            Msg::MeetingToggleJoin(id) => {
+            Msg::MeetingToggleRegistered(id) => {
                 let boxed_id = boxed::Box::<u32>::new(id);
-                if self.joined_meetings.contains(&id) {
-                    self.joined_meetings.remove(&id);
+                if self.registered_meetings.contains(&id) {
+                    self.registered_meetings.remove(&id);
                     ctx.link().send_future(async {
-                        join_meeting(boxed_id, false).await.unwrap();
-                        Msg::MeetingJoinChanged
+                        register_for_meeting(boxed_id, false).await.unwrap();
+                        Msg::MeetingRegisteredChanged
                     });
                 } else {
-                    self.joined_meetings.insert(id);
+                    self.registered_meetings.insert(id);
                     ctx.link().send_future(async {
-                        join_meeting(boxed_id, true).await.unwrap();
-                        Msg::MeetingJoinChanged
+                        register_for_meeting(boxed_id, true).await.unwrap();
+                        Msg::MeetingRegisteredChanged
                     });
                 }
                 true
@@ -659,16 +816,33 @@ impl Component for Model {
                 true
             }
             Msg::Noop => true,
-            Msg::SetJoinedMeetings(meetings) => {
-                self.joined_meetings = meetings.into_iter().collect();
+            Msg::SetMeetingTopics(topics) => {
+                self.meeting_topics = Some(topics);
+                true
+            }
+            Msg::SetRegisteredMeetings(meetings) => {
+                self.registered_meetings = meetings.into_iter().collect();
                 true
             }
             Msg::SetMeetings(meetings) => {
                 self.meetings = meetings;
                 true
             }
+            Msg::SetNRegisteredNJoined((n_registered, n_joined)) => {
+                self.n_attending_meeting_registered = Some(n_registered);
+                self.n_attending_meeting_joined = Some(n_joined);
+                true
+            }
             Msg::SetTab(tab) => {
-                self.active_tab = tab;
+                let prev_tab = self.active_tab.clone();
+                self.active_tab = tab.clone();
+                if let Some(meeting_id) = self.attending_meeting {
+                    if tab == Tab::MeetingPrep && tab != prev_tab {
+                        ctx.link()
+                            .send_message(Msg::FetchNMeetingParticipants(meeting_id));
+                        ctx.link().send_message(Msg::FetchMeetingTopics(meeting_id));
+                    }
+                }
                 true
             }
             Msg::SetUserId(email) => {
@@ -840,7 +1014,9 @@ impl Component for Model {
                         Tab::MeetingManagement => {
                             self.meeting_management_html(ctx)
                         }
-                        Tab::MeetingPrep => html!{}
+                        Tab::MeetingPrep => html!{
+                            self.meeting_attendance_html(ctx)
+                        }
                     }
                 }
             </div>
