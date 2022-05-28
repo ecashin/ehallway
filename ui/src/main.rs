@@ -11,8 +11,9 @@ use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 use ehall::{
-    MeetingsMessage, NewMeeting, NewTopicMessage, ParticipateMeetingMessage,
-    RegisteredMeetingsMessage, ScoreMessage, UserIdMessage, UserTopic, UserTopicsMessage,
+    MeetingParticipantsMessage, MeetingsMessage, NewMeeting, NewTopicMessage,
+    ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserIdMessage, UserTopic,
+    UserTopicsMessage,
 };
 
 mod chance;
@@ -94,6 +95,7 @@ enum Msg {
     MeetingToggleRegistered(u32),
     MeetingUp(u32),
     Noop,
+    SetNRegisteredNJoined((u32, u32)),
     SetRegisteredMeetings(Vec<u32>),
     SetMeetings(HashMap<u32, (String, u32)>),
     SetTab(Tab),
@@ -119,7 +121,7 @@ impl UserIdState {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 enum Tab {
     MeetingManagement,
     MeetingPrep,
@@ -128,6 +130,8 @@ enum Tab {
 
 struct Model {
     attending_meeting: Option<u32>,
+    n_attending_meeting_registered: Option<u32>,
+    n_attending_meeting_joined: Option<u32>,
     registered_meetings: HashSet<u32>,
     meetings: HashMap<u32, (String, u32)>,
     new_meeting_text: String,
@@ -183,6 +187,18 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
                 })
                 .collect::<HashMap<_, _>>())
         }
+        Err(e) => Err(e.into()),
+    }
+}
+
+async fn fetch_n_meeting_participants(
+    meeting_id: boxed::Box<u32>,
+) -> Result<MeetingParticipantsMessage> {
+    let url = format!("https://localhost/meeting/{meeting_id}/participant_counts");
+    let resp: std::result::Result<MeetingParticipantsMessage, gloo_net::Error> =
+        http::Request::get(&url).send().await?.json().await;
+    match resp {
+        Ok(msg) => Ok(msg),
         Err(e) => Err(e.into()),
     }
 }
@@ -321,19 +337,31 @@ impl Model {
     }
 
     fn meeting_attendance_html(&self, ctx: &Context<Self>) -> Html {
-        let meeting_id = self.attending_meeting.unwrap();
-        let meeting_name = &self.meetings.get(&meeting_id).unwrap().0;
-        html! {
-            <div class="container">
-                <div class="row">
-                    <h2>{ format!("Attending meeting: {}", meeting_name) }</h2>
-                    <button
-                        onclick={ctx.link().callback(move |_| Msg::LeaveMeeting)}
-                        type={"button"}
-                        class={"btn btn-secondary"}
-                    >{"leave"}</button>
+        if let Some(meeting_id) = self.attending_meeting {
+            let meeting_name = &self.meetings.get(&meeting_id).unwrap().0;
+            let join_info_html = if let Some(n_registered) = self.n_attending_meeting_registered {
+                let n_joined = self.n_attending_meeting_joined.unwrap();
+                html! {
+                    <h3>{format!("{n_joined} of {n_registered} registered participants have joined")}</h3>
+                }
+            } else {
+                html! {}
+            };
+            html! {
+                <div class="container">
+                    <div class="row">
+                        <h2>{ format!("Attending meeting: {}", meeting_name) }</h2>
+                        {join_info_html}
+                        <button
+                            onclick={ctx.link().callback(move |_| Msg::LeaveMeeting)}
+                            type={"button"}
+                            class={"btn btn-secondary"}
+                        >{"leave"}</button>
+                    </div>
                 </div>
-            </div>
+            }
+        } else {
+            html! {}
         }
     }
     fn meeting_management_html(&self, ctx: &Context<Self>) -> Html {
@@ -518,6 +546,8 @@ impl Component for Model {
             attending_meeting: None,
             registered_meetings: HashSet::new(),
             meetings: HashMap::new(),
+            n_attending_meeting_joined: None,
+            n_attending_meeting_registered: None,
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
             user_id: UserIdState::New,
@@ -587,7 +617,7 @@ impl Component for Model {
             }
             Msg::AttendingMeeting(id) => {
                 self.attending_meeting = Some(*id);
-                self.active_tab = Tab::MeetingPrep;
+                ctx.link().send_message(Msg::SetTab(Tab::MeetingPrep));
                 true
             }
             Msg::AttendMeeting(id) => {
@@ -706,8 +736,28 @@ impl Component for Model {
                 self.meetings = meetings;
                 true
             }
+            Msg::SetNRegisteredNJoined((n_registered, n_joined)) => {
+                self.n_attending_meeting_registered = Some(n_registered);
+                self.n_attending_meeting_joined = Some(n_joined);
+                true
+            }
             Msg::SetTab(tab) => {
-                self.active_tab = tab;
+                let prev_tab = self.active_tab.clone();
+                self.active_tab = tab.clone();
+                if let Some(meeting_id) = self.attending_meeting {
+                    if tab == Tab::MeetingPrep && tab != prev_tab {
+                        let id = boxed::Box::new(meeting_id);
+                        ctx.link().send_future(async {
+                            match fetch_n_meeting_participants(id).await {
+                                Ok(MeetingParticipantsMessage {
+                                    n_joined,
+                                    n_registered,
+                                }) => Msg::SetNRegisteredNJoined((n_registered, n_joined)),
+                                Err(e) => Msg::LogError(e),
+                            }
+                        });
+                    }
+                }
                 true
             }
             Msg::SetUserId(email) => {

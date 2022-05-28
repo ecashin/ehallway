@@ -16,7 +16,7 @@ use std::{convert::TryInto, path::PathBuf, result::Result};
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    Meeting, MeetingMessage, NewMeeting, NewTopicMessage, ParticipateMeetingMessage,
+    Meeting, MeetingParticipantsMessage, MeetingMessage, NewMeeting, NewTopicMessage, ParticipateMeetingMessage,
     RegisteredMeetingsMessage, ScoreMessage, UserTopic,
 };
 
@@ -285,6 +285,31 @@ const GET_SCORED_MEETINGS: &str = "
     on meetings.id = q.id;
 ";
 
+#[get("/meeting/<id>/participant_counts")]
+async fn get_meeting_participants(_user: User,
+    client: &State<sync::Arc<Client>>,
+    id: u32) -> Json<MeetingParticipantsMessage> {
+    let sql = "
+        select (
+            select count(*) from meeting_attendees
+            where meeting = $1
+        ) as n_joined,
+        (select count(*) from meeting_participants
+            where meeting = $1
+        ) as n_registered
+    ";
+    let id = id as i64;
+    let stmt = client.prepare(sql).await.unwrap();
+    let rows = client.query(&stmt, &[&id]).await.unwrap();
+    let row = rows.get(0).unwrap();
+    let n_joined = row.get::<_, i64>(0);
+    let n_registered = row.get::<_, i64>(1);
+    MeetingParticipantsMessage {
+        n_joined: n_joined as u32,
+        n_registered: n_registered as u32,
+    }.into()
+}
+
 #[get("/registered_meetings")]
 async fn get_registered_meetings(
     user: User,
@@ -427,6 +452,7 @@ async fn main() -> anyhow::Result<()> {
                 attend_meeting,
                 delete_meeting,
                 delete_topic,
+                get_meeting_participants,
                 get_meetings,
                 get_registered_meetings,
                 get_user_topics,

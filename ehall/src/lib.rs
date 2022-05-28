@@ -7,6 +7,11 @@ pub struct Meeting {
     pub name: String,
     pub id: u32,
 }
+#[derive(Serialize, Deserialize)]
+pub struct MeetingParticipantsMessage {
+    pub n_joined: u32,
+    pub n_registered: u32,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct MeetingMessage {
