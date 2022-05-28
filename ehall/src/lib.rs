@@ -61,7 +61,7 @@ pub struct UserTopic {
     pub id: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct UserTopicsMessage {
     pub topics: Vec<UserTopic>,
 }

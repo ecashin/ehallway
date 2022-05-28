@@ -89,6 +89,7 @@ enum Msg {
     DeleteTopic(u32),
     DidStoreMeetingScore,
     FetchNMeetingParticipants(u32),
+    FetchMeetingTopics(u32),
     LeaveMeeting,
     LogError(Error),
     MeetingDown(u32),
@@ -99,6 +100,7 @@ enum Msg {
     SetNRegisteredNJoined((u32, u32)),
     SetRegisteredMeetings(Vec<u32>),
     SetMeetings(HashMap<u32, (String, u32)>),
+    SetMeetingTopics(Vec<UserTopic>),
     SetTab(Tab),
     SetUserId(String),
     SetUserTopics(HashMap<u32, UserTopic>), // set in Model
@@ -134,6 +136,7 @@ struct Model {
     n_attending_meeting_registered: Option<u32>,
     n_attending_meeting_joined: Option<u32>,
     registered_meetings: HashSet<u32>,
+    meeting_topics: Option<Vec<UserTopic>>,
     meetings: HashMap<u32, (String, u32)>,
     new_meeting_text: String,
     new_topic_text: String,
@@ -213,6 +216,32 @@ async fn fetch_registered_meetings() -> Result<Vec<u32>> {
             .await;
     match resp {
         Ok(msg) => Ok(msg.meetings),
+        Err(e) => Err(e.into()),
+    }
+}
+
+async fn fetch_meeting_topics(meeting_id: boxed::Box<u32>) -> Result<Vec<UserTopic>> {
+    let url = format!("https://localhost/meeting/{meeting_id}/topics");
+    let resp: std::result::Result<UserTopicsMessage, gloo_net::Error> =
+        http::Request::get(&url).send().await?.json().await;
+    match resp {
+        Ok(msg) => {
+            let mut topics = msg.topics;
+            topics.sort_by(|a, b| {
+                let UserTopic { score: a_score, .. } = a;
+                let UserTopic { score: b_score, .. } = b;
+                a_score.partial_cmp(b_score).unwrap()
+            });
+            Ok(topics
+                .into_iter()
+                .enumerate()
+                .map(|(score, UserTopic { text, id, .. })| UserTopic {
+                    id,
+                    text,
+                    score: score as u32,
+                })
+                .collect())
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -361,6 +390,24 @@ impl Model {
             } else {
                 html! {}
             };
+            let meeting_topics_html = if let Some(topics) = &self.meeting_topics {
+                let items: Vec<_> = topics
+                    .iter()
+                    .map(|topic| {
+                        let txt = topic.text.clone();
+                        html! {
+                            <li>{ txt }</li>
+                        }
+                    })
+                    .collect();
+                html! {
+                    <ul>
+                        { items }
+                    </ul>
+                }
+            } else {
+                html! {}
+            };
             html! {
                 <div class="container">
                     <div class="row">
@@ -371,6 +418,9 @@ impl Model {
                             type={"button"}
                             class={"btn btn-secondary"}
                         >{"leave"}</button>
+                    </div>
+                    <div class="row">
+                        { meeting_topics_html }
                     </div>
                 </div>
             }
@@ -559,6 +609,7 @@ impl Component for Model {
         let mut model = Self {
             attending_meeting: None,
             registered_meetings: HashSet::new(),
+            meeting_topics: None,
             meetings: HashMap::new(),
             n_attending_meeting_joined: None,
             n_attending_meeting_registered: None,
@@ -686,6 +737,16 @@ impl Component for Model {
                 });
                 true
             }
+            Msg::FetchMeetingTopics(meeting_id) => {
+                let id = boxed::Box::new(meeting_id);
+                ctx.link().send_future(async {
+                    match fetch_meeting_topics(id).await {
+                        Ok(topics) => Msg::SetMeetingTopics(topics),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
             Msg::LeaveMeeting => {
                 self.attending_meeting = None;
                 self.active_tab = Tab::MeetingManagement;
@@ -755,6 +816,10 @@ impl Component for Model {
                 true
             }
             Msg::Noop => true,
+            Msg::SetMeetingTopics(topics) => {
+                self.meeting_topics = Some(topics);
+                true
+            }
             Msg::SetRegisteredMeetings(meetings) => {
                 self.registered_meetings = meetings.into_iter().collect();
                 true
@@ -775,6 +840,7 @@ impl Component for Model {
                     if tab == Tab::MeetingPrep && tab != prev_tab {
                         ctx.link()
                             .send_message(Msg::FetchNMeetingParticipants(meeting_id));
+                        ctx.link().send_message(Msg::FetchMeetingTopics(meeting_id));
                     }
                 }
                 true

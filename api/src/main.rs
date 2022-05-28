@@ -16,8 +16,9 @@ use std::{convert::TryInto, path::PathBuf, result::Result};
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    Meeting, MeetingParticipantsMessage, MeetingMessage, NewMeeting, NewTopicMessage, ParticipateMeetingMessage,
-    RegisteredMeetingsMessage, ScoreMessage, UserTopic,
+    Meeting, MeetingMessage, MeetingParticipantsMessage, NewMeeting, NewTopicMessage,
+    ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserTopic,
+    UserTopicsMessage,
 };
 
 #[derive(Deserialize)]
@@ -286,9 +287,11 @@ const GET_SCORED_MEETINGS: &str = "
 ";
 
 #[get("/meeting/<id>/participant_counts")]
-async fn get_meeting_participants(_user: User,
+async fn get_meeting_participants(
+    _user: User,
     client: &State<sync::Arc<Client>>,
-    id: u32) -> Json<MeetingParticipantsMessage> {
+    id: u32,
+) -> Json<MeetingParticipantsMessage> {
     let sql = "
         select (
             select count(*) from meeting_attendees
@@ -307,7 +310,43 @@ async fn get_meeting_participants(_user: User,
     MeetingParticipantsMessage {
         n_joined: n_joined as u32,
         n_registered: n_registered as u32,
-    }.into()
+    }
+    .into()
+}
+
+#[get("/meeting/<id>/topics")]
+async fn get_meeting_topics(
+    _user: User,
+    client: &State<sync::Arc<Client>>,
+    id: u32,
+) -> Json<UserTopicsMessage> {
+    let id = id as i64;
+    let stmt = client
+        .prepare(
+            "
+            select topic, id, score from user_topics where email in
+            (select distinct email from meeting_attendees
+                where meeting = $1)
+            ",
+        )
+        .await
+        .unwrap();
+    let rows = client.query(&stmt, &[&id]).await.unwrap();
+    let topics: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let text = row.get::<_, String>(0);
+            let id = row.get::<_, i64>(1);
+            let score = row.get::<_, i32>(2);
+            assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
+            UserTopic {
+                text,
+                score: score as u32,
+                id: id as u32,
+            }
+        })
+        .collect();
+    UserTopicsMessage { topics }.into()
 }
 
 #[get("/registered_meetings")]
@@ -360,7 +399,7 @@ async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
 }
 
 #[get("/user_topics")]
-async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Value {
+async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Json<UserTopicsMessage> {
     let stmt = client
         .prepare(
             "
@@ -384,7 +423,7 @@ async fn get_user_topics(user: User, client: &State<sync::Arc<Client>>) -> Value
             }
         })
         .collect();
-    json!({ "topics": topics })
+    UserTopicsMessage { topics }.into()
 }
 
 #[get("/user_id")]
@@ -453,6 +492,7 @@ async fn main() -> anyhow::Result<()> {
                 delete_meeting,
                 delete_topic,
                 get_meeting_participants,
+                get_meeting_topics,
                 get_meetings,
                 get_registered_meetings,
                 get_user_topics,
