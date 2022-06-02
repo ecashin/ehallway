@@ -16,7 +16,6 @@ use ehall::{
     UserTopicsMessage,
 };
 
-mod chance;
 mod cull;
 mod js;
 

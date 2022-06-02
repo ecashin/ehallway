@@ -16,10 +16,12 @@ use std::{convert::TryInto, path::PathBuf, result::Result};
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    Meeting, MeetingMessage, MeetingParticipantsMessage, NewMeeting, NewTopicMessage,
-    ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserTopic,
+    CohortMessage, Meeting, MeetingMessage, MeetingParticipantsMessage, NewMeeting,
+    NewTopicMessage, ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserTopic,
     UserTopicsMessage,
 };
+
+mod chance;
 
 #[derive(Deserialize)]
 struct Config {
@@ -77,7 +79,46 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_TABLES: [&str; 7] = [
+const CREATE_FUNCTIONS: [&str; 1] = ["
+    CREATE FUNCTION epeers(uid varchar, mtg bigint) RETURNS table (email varchar) AS $$
+    << outerblock >>
+    DECLARE
+        cgrp bigint;
+	    cht bigint;
+    BEGIN
+	select cohort_group into strict cgrp
+        from testtbl1
+    where meeting = mtg;
+	select cohort into strict cht
+        from testtbl2
+    where cohort_group = cgrp and testtbl2.email = uid;
+    RETURN query (
+        select testtbl2.email
+            from testtbl2
+        where cohort_group = cgrp and cohort = cht
+    );
+    END;
+    $$ LANGUAGE plpgsql;
+    "];
+
+const CREATE_TABLES: [&str; 10] = [
+    "
+    create table if not exists cohort_groups (
+        id bigserial primary key,
+        meeting bigint not null
+    );
+    ",
+    "
+    create unique index if not exists cohort_groups_meeting_idx
+    on cohort_groups (meeting);
+    ",
+    "
+    create table if not exists cohort_members (
+        cohort_group bigint not null,
+        cohort integer not null,
+        email varchar (254) not null,
+    )
+    ",
     "
     create table if not exists user_topics (
         email varchar (254) not null,
@@ -132,6 +173,92 @@ const NEW_MEETING: &str = "
     values ($1)
     returning id;
 ";
+
+async fn store_cohorts_for_group(client: &Client, cohort_group: i64, meeting_id: i64) {
+    let sql = "
+        select (email) from meeting_attendees
+        where meeting = $1
+    ";
+    let stmt = client.prepare(sql).await.unwrap();
+    let emails: Vec<String> = client
+        .query(&stmt, &[&meeting_id])
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect();
+    let cohorts = chance::cohorts(emails.len(), 3).unwrap();
+    let cohort_rows: Vec<_> = cohorts
+        .into_iter()
+        .enumerate()
+        .flat_map(|(cohort_id, members)| {
+            members
+                .into_iter()
+                .zip(std::iter::repeat(cohort_id))
+                .map(|(email_idx, cohort_id)| {
+                    let cohort_id = cohort_id as i64;
+                    (cohort_id, &emails[email_idx])
+                })
+        })
+        .collect();
+    let sql = "
+        insert into cohort_members
+            (cohort_group, cohort, email)
+        values
+            ($1, $2, $3)
+    ";
+    for (cohort, email) in cohort_rows {
+        client
+            .execute(sql, &[&cohort_group, &cohort, &email])
+            .await
+            .unwrap();
+    }
+}
+
+async fn cohort_for_user(client: &Client, meeting_id: i64, email: &str) -> Option<Vec<String>> {
+    let sql = "
+        select epeers($1, $2)
+    ";
+    let stmt = client.prepare(sql).await.unwrap();
+    let rows = client.query(&stmt, &[&email, &meeting_id]).await.unwrap();
+    if rows.is_empty() {
+        None
+    } else {
+        Some(rows.iter().map(|row| row.get::<_, String>(0)).collect())
+    }
+}
+
+#[put("/meeting/<id>/start")]
+async fn start_meeting(
+    client: &State<sync::Arc<Client>>,
+    user: User,
+    id: u32,
+) -> Json<CohortMessage> {
+    let id = id as i64;
+    let sql = "
+        begin transaction serializable;
+        insert into cohort_groups
+            (meeting)
+            values
+            ($1)
+        on conflict (meeting) do nothing
+        returning id;
+        commit
+    ";
+    let stmt = client.prepare(sql).await.unwrap();
+    let rows = client.query(&stmt, &[&id]).await.unwrap();
+    if rows.len() == 1 {
+        let cohort_group = rows[0].get::<_, i64>(0);
+        store_cohorts_for_group(client, cohort_group, id).await;
+        eprintln!("created");
+    } else {
+        eprintln!("not created");
+    }
+    CohortMessage {
+        cohort: cohort_for_user(client, id, user.email()).await,
+    }
+    .into()
+}
 
 #[post("/meeting/<id>/participants", data = "<msg>", format = "json")]
 async fn meeting_participate(
@@ -228,6 +355,7 @@ async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) 
         .unwrap();
     json!({ "attending": id })
 }
+
 #[delete("/meetings/<id>")]
 async fn delete_meeting(_user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
     let identifier = id as i64;
@@ -488,6 +616,9 @@ async fn main() -> anyhow::Result<()> {
         for sql in CREATE_TABLES {
             client.execute(sql, &[]).await?;
         }
+        for sql in CREATE_FUNCTIONS {
+            client.execute(sql, &[]).await?;
+        }
     }
     let _app = rocket::build()
         .mount(
@@ -511,6 +642,7 @@ async fn main() -> anyhow::Result<()> {
                 get_signup,
                 logout,
                 post_login,
+                start_meeting,
                 store_meeting_score,
                 delete,
                 show_all_users
