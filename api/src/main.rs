@@ -79,7 +79,11 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_FUNCTIONS: [&str; 1] = ["
+const CREATE_DB_ASSETS: [&str; 12] = [
+    "
+    drop function epeers
+    ",
+    "
     CREATE FUNCTION epeers(uid varchar, mtg bigint) RETURNS table (email varchar) AS $$
     << outerblock >>
     DECLARE
@@ -99,9 +103,7 @@ const CREATE_FUNCTIONS: [&str; 1] = ["
     );
     END;
     $$ LANGUAGE plpgsql;
-    "];
-
-const CREATE_TABLES: [&str; 10] = [
+    ",
     "
     create table if not exists cohort_groups (
         id bigserial primary key,
@@ -116,7 +118,7 @@ const CREATE_TABLES: [&str; 10] = [
     create table if not exists cohort_members (
         cohort_group bigint not null,
         cohort integer not null,
-        email varchar (254) not null,
+        email varchar (254) not null
     )
     ",
     "
@@ -613,10 +615,8 @@ async fn main() -> anyhow::Result<()> {
     users.create_table().await?;
     {
         let client = client.clone();
-        for sql in CREATE_TABLES {
-            client.execute(sql, &[]).await?;
-        }
-        for sql in CREATE_FUNCTIONS {
+        for sql in CREATE_DB_ASSETS {
+            print!("{sql}");
             client.execute(sql, &[]).await?;
         }
     }
