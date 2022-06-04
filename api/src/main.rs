@@ -93,12 +93,12 @@ const CREATE_DB_ASSETS: [&str; 12] = [
     << outerblock >>
     DECLARE
         cgrp bigint;
-	    cht bigint;
+        cht bigint;
     BEGIN
-	select cohort_group into strict cgrp
+        select cohort_group into strict cgrp
         from testtbl1
     where meeting = mtg;
-	select cohort into strict cht
+        select cohort into strict cht
         from testtbl2
     where cohort_group = cgrp and testtbl2.email = uid;
     RETURN query (
@@ -339,12 +339,13 @@ async fn add_new_topic(
     println!("new topic {} with id {id}", &topic.new_topic);
     let sql = "
         update user_topics
-	    set score = (select 1 + coalesce(max(score), -1)
-	        from user_topics where email = $2)
-	    where id = $1;
+            set score = (
+                select 1 + coalesce(max(score), -1)
+                from user_topics where email = $2
+            )
+            where id = $1;
     ";
-    // XXXdebug: remove unwrap when done debugging.
-    client.execute(sql, &[&id, &user.email()]).await.unwrap();
+    client.execute(sql, &[&id, &user.email()]).await?;
     Ok(json!({ "inserted": id as u32 }))
 }
 
