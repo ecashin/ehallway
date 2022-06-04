@@ -2,6 +2,13 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
+/// A None cohort means try again.
+#[derive(Serialize, Deserialize)]
+pub struct CohortMessage {
+    /// The cohort that includes the user getting the message
+    pub cohort: Option<Vec<String>>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct Meeting {
     pub name: String,
