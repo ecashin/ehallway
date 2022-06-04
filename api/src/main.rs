@@ -2,6 +2,7 @@ use std::fs;
 
 use anyhow::Context;
 use clap::Parser;
+use rand::Rng;
 use rocket::fs::FileServer;
 use rocket::serde::{
     json::{Json, Value},
@@ -13,6 +14,7 @@ use rocket_dyn_templates::Template;
 use serde_json::json;
 use std::*;
 use std::{convert::TryInto, path::PathBuf, result::Result};
+use tokio::time;
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
@@ -22,6 +24,9 @@ use ehall::{
 };
 
 mod chance;
+
+const N_RETRIES: usize = 10;
+const RETRY_SLEEP_MS: u64 = 100;
 
 #[derive(Deserialize)]
 struct Config {
@@ -222,12 +227,16 @@ async fn cohort_for_user(client: &Client, meeting_id: i64, email: &str) -> Optio
         select epeers($1, $2)
     ";
     let stmt = client.prepare(sql).await.unwrap();
-    let rows = client.query(&stmt, &[&email, &meeting_id]).await.unwrap();
-    if rows.is_empty() {
-        None
-    } else {
-        Some(rows.iter().map(|row| row.get::<_, String>(0)).collect())
+    for _ in 0..N_RETRIES {
+        let rows = client.query(&stmt, &[&email, &meeting_id]).await.unwrap();
+        if !rows.is_empty() {
+            return Some(rows.iter().map(|row| row.get::<_, String>(0)).collect());
+        }
+        // Use randomness to disperse timings (overkill, but fun)
+        let sleep_ms = RETRY_SLEEP_MS + rand::thread_rng().gen_range(0..20);
+        time::sleep(time::Duration::from_millis(sleep_ms)).await;
     }
+    None
 }
 
 #[put("/meeting/<id>/start")]
