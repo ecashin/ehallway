@@ -19,7 +19,7 @@ use svg::{add_icon, down_arrow, up_arrow, x_icon};
 
 mod cull;
 mod js;
-mod rankable;
+mod ranking;
 mod svg;
 
 enum Msg {
@@ -32,6 +32,8 @@ enum Msg {
     DeleteMeeting(u32),
     DeleteTopic(u32),
     DidStoreMeetingScore,
+    DidStoreMeetingTopicScore,
+    DidStoreUserTopicScore,
     FetchNMeetingParticipants(u32),
     FetchMeetingTopics(u32),
     LeaveMeeting,
@@ -39,6 +41,8 @@ enum Msg {
     MeetingDown(u32),
     MeetingRegisteredChanged,
     MeetingToggleRegistered(u32),
+    MeetingTopicDown(u32),
+    MeetingTopicUp(u32),
     MeetingUp(u32),
     Noop,
     SetNRegisteredNJoined((u32, u32)),
@@ -49,11 +53,12 @@ enum Msg {
     SetUserId(String),
     SetUserTopics(HashMap<u32, UserTopic>), // set in Model
     StoreMeetingScore(u32),                 // store to database
-    StoreTopicScore(u32),
-    TopicDown(u32),
-    TopicUp(u32),
+    StoreMeetingTopicScore(u32),
+    StoreUserTopicScore(u32),
     UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
+    UserTopicDown(u32),
+    UserTopicUp(u32),
 }
 
 enum UserIdState {
@@ -76,11 +81,11 @@ enum Tab {
 }
 
 struct Model {
-    attending_meeting: Option<u32>,
+    attending_meeting: Option<u32>, // the meeting the user is currently attending
     n_attending_meeting_registered: Option<u32>,
     n_attending_meeting_joined: Option<u32>,
     registered_meetings: HashSet<u32>,
-    meeting_topics: Option<Vec<UserTopic>>,
+    meeting_topics: Option<HashMap<u32, UserTopic>>,
     meetings: HashMap<u32, (String, u32)>,
     new_meeting_text: String,
     new_topic_text: String,
@@ -236,12 +241,33 @@ async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
     Ok(())
 }
 
-async fn store_score(
-    what: &str,
+async fn store_meeting_score(meeting_id: boxed::Box<u32>, score: boxed::Box<u32>) -> Result<()> {
+    let url = format!("https://localhost/meeting/{}/score", meeting_id);
+    gloo_net::http::Request::put(&url)
+        .json(&ScoreMessage { score: *score })?
+        .send()
+        .await?;
+    Ok(())
+}
+
+async fn store_meeting_topic_score(
     meeting_id: boxed::Box<u32>,
+    topic_id: boxed::Box<u32>,
     score: boxed::Box<u32>,
 ) -> Result<()> {
-    let url = format!("https://localhost/{what}/{}/score", meeting_id);
+    let url = format!(
+        "https://localhost/meeting/{}/topic/{}/score",
+        meeting_id, topic_id
+    );
+    gloo_net::http::Request::put(&url)
+        .json(&ScoreMessage { score: *score })?
+        .send()
+        .await?;
+    Ok(())
+}
+
+async fn store_user_topic_score(topic_id: boxed::Box<u32>, score: boxed::Box<u32>) -> Result<()> {
+    let url = format!("https://localhost/topic/{}/score", topic_id);
     gloo_net::http::Request::put(&url)
         .json(&ScoreMessage { score: *score })?
         .send()
@@ -337,14 +363,15 @@ impl Model {
             let meeting_topics_html = if let Some(topics) = &self.meeting_topics {
                 let items: Vec<_> = topics
                     .iter()
-                    .map(|topic| {
+                    .map(|(id, topic)| {
                         let txt = topic.text.clone();
+                        assert_eq!(*id, topic.id);
                         let id = topic.id;
                         html! {
-                            <rankable::Rankable
+                            <ranking::Rankable
                                 label={txt}
-                                on_down={ctx.link().callback(move |_| Msg::TopicUp(id))}
-                                on_up={ctx.link().callback(move |_| Msg::TopicUp(id))}
+                                on_down={ctx.link().callback(move |_| Msg::MeetingTopicUp(id))}
+                                on_up={ctx.link().callback(move |_| Msg::MeetingTopicUp(id))}
                                 on_delete={None} />
                         }
                     })
@@ -498,9 +525,8 @@ impl Model {
         mtgs
     }
 
-    fn sorted_by_score_topics(&self) -> Vec<(u32, u32)> {
-        let mut topics: Vec<_> = self
-            .user_topics
+    fn sorted_by_score_topics(&self, topics: &HashMap<u32, UserTopic>) -> Vec<(u32, u32)> {
+        let mut topics: Vec<_> = topics
             .iter()
             .map(
                 |(
@@ -673,6 +699,14 @@ impl Component for Model {
                 });
                 true
             }
+            Msg::DidStoreMeetingTopicScore => {
+                // XXX -- Not refreshing from DB.
+                true
+            }
+            Msg::DidStoreUserTopicScore => {
+                // XXX -- Not refreshing from DB.
+                true
+            }
             Msg::FetchNMeetingParticipants(meeting_id) => {
                 let id = boxed::Box::new(meeting_id);
                 ctx.link().send_future(async {
@@ -745,6 +779,55 @@ impl Component for Model {
                 }
                 true
             }
+            // These are like the user-topic up/down
+            Msg::MeetingTopicDown(down_id) => {
+                if self.meeting_topics.is_some() {
+                    let mut topics =
+                        self.sorted_by_score_topics(self.meeting_topics.as_ref().unwrap());
+                    if let Some(pos) = topics.iter().position(|(id, _score)| *id == down_id) {
+                        if pos > 0 && topics.len() > 1 {
+                            topics[pos].1 -= 1;
+                            topics[pos - 1].1 += 1;
+                            for (id, score) in topics {
+                                self.meeting_topics.as_mut().unwrap().entry(id).and_modify(
+                                    |topic| {
+                                        if topic.score != score {
+                                            topic.score = score;
+                                            ctx.link()
+                                                .send_message(Msg::StoreMeetingTopicScore(id));
+                                        }
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+                true
+            }
+            Msg::MeetingTopicUp(up_id) => {
+                if self.meeting_topics.is_some() {
+                    let mut topics =
+                        self.sorted_by_score_topics(self.meeting_topics.as_ref().unwrap());
+                    if let Some(pos) = topics.iter().position(|(id, _score)| *id == up_id) {
+                        if pos < topics.len() - 1 && topics.len() > 1 {
+                            topics[pos].1 += 1;
+                            topics[pos + 1].1 -= 1;
+                            for (id, score) in topics {
+                                self.meeting_topics.as_mut().unwrap().entry(id).and_modify(
+                                    |topic| {
+                                        if topic.score != score {
+                                            topic.score = score;
+                                            ctx.link()
+                                                .send_message(Msg::StoreMeetingTopicScore(id));
+                                        }
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+                true
+            }
             Msg::MeetingUp(up_id) => {
                 let mut mtgs = self.sorted_by_score_meetings();
                 if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == up_id) {
@@ -756,7 +839,7 @@ impl Component for Model {
                                 let modified = *entry_score != score;
                                 *entry_score = score;
                                 if modified {
-                                    ctx.link().send_message(Msg::StoreMeetingScore(id));
+                                    ctx.link().send_message(Msg::StoreMeetingTopicScore(id));
                                 }
                             });
                         }
@@ -766,6 +849,7 @@ impl Component for Model {
             }
             Msg::Noop => true,
             Msg::SetMeetingTopics(topics) => {
+                let topics: HashMap<_, _> = topics.into_iter().map(|t| (t.id, t)).collect();
                 self.meeting_topics = Some(topics);
                 true
             }
@@ -815,7 +899,7 @@ impl Component for Model {
                     let score = boxed::Box::new(*score);
                     let meeting_id = boxed::Box::new(meeting_id);
                     ctx.link().send_future(async {
-                        match store_score("meeting", meeting_id, score).await {
+                        match store_meeting_score(meeting_id, score).await {
                             Ok(_) => Msg::DidStoreMeetingScore,
                             Err(e) => Msg::LogError(e),
                         }
@@ -828,54 +912,36 @@ impl Component for Model {
                 }
                 true
             }
-            Msg::StoreTopicScore(id) => {
+            Msg::StoreMeetingTopicScore(id) => {
+                if self.meeting_topics.is_some() {
+                    if let Some(topic) = self.meeting_topics.as_mut().unwrap().get(&id) {
+                        let score = boxed::Box::new(topic.score);
+                        let topic_id = boxed::Box::new(id);
+                        let meeting_id = boxed::Box::new(self.attending_meeting.unwrap());
+                        ctx.link().send_future(async {
+                            match store_meeting_topic_score(meeting_id, topic_id, score).await {
+                                Ok(_) => Msg::DidStoreMeetingTopicScore,
+                                Err(e) => Msg::LogError(e),
+                            }
+                        });
+                    } else {
+                        js::console_log(JsValue::from(format!("topic ID without score: {id}",)));
+                    }
+                }
+                true
+            }
+            Msg::StoreUserTopicScore(id) => {
                 if let Some(topic) = self.user_topics.get(&id) {
                     let score = boxed::Box::new(topic.score);
                     let id = boxed::Box::new(id);
                     ctx.link().send_future(async {
-                        match store_score("topic", id, score).await {
-                            Ok(_) => Msg::DidStoreMeetingScore,
+                        match store_user_topic_score(id, score).await {
+                            Ok(_) => Msg::DidStoreUserTopicScore,
                             Err(e) => Msg::LogError(e),
                         }
                     });
                 } else {
                     js::console_log(JsValue::from(format!("topic ID without score: {id}",)));
-                }
-                true
-            }
-            Msg::TopicDown(down_id) => {
-                let mut topics = self.sorted_by_score_topics();
-                if let Some(pos) = topics.iter().position(|(id, _score)| *id == down_id) {
-                    if pos > 0 && topics.len() > 1 {
-                        topics[pos].1 -= 1;
-                        topics[pos - 1].1 += 1;
-                        for (id, score) in topics {
-                            self.user_topics.entry(id).and_modify(|topic| {
-                                if topic.score != score {
-                                    topic.score = score;
-                                    ctx.link().send_message(Msg::StoreTopicScore(id));
-                                }
-                            });
-                        }
-                    }
-                }
-                true
-            }
-            Msg::TopicUp(up_id) => {
-                let mut topics = self.sorted_by_score_topics();
-                if let Some(pos) = topics.iter().position(|(id, _score)| *id == up_id) {
-                    if pos < topics.len() - 1 && topics.len() > 1 {
-                        topics[pos].1 += 1;
-                        topics[pos + 1].1 -= 1;
-                        for (id, score) in topics {
-                            self.user_topics.entry(id).and_modify(|topic| {
-                                if topic.score != score {
-                                    topic.score = score;
-                                    ctx.link().send_message(Msg::StoreMeetingScore(id));
-                                }
-                            });
-                        }
-                    }
                 }
                 true
             }
@@ -885,6 +951,43 @@ impl Component for Model {
             }
             Msg::UpdateNewTopicText(text) => {
                 self.new_topic_text = text;
+                true
+            }
+            // These are like the meeting-topic up/down
+            Msg::UserTopicDown(down_id) => {
+                let mut topics = self.sorted_by_score_topics(&self.user_topics);
+                if let Some(pos) = topics.iter().position(|(id, _score)| *id == down_id) {
+                    if pos > 0 && topics.len() > 1 {
+                        topics[pos].1 -= 1;
+                        topics[pos - 1].1 += 1;
+                        for (id, score) in topics {
+                            self.user_topics.entry(id).and_modify(|topic| {
+                                if topic.score != score {
+                                    topic.score = score;
+                                    ctx.link().send_message(Msg::StoreUserTopicScore(id));
+                                }
+                            });
+                        }
+                    }
+                }
+                true
+            }
+            Msg::UserTopicUp(up_id) => {
+                let mut topics = self.sorted_by_score_topics(&self.user_topics);
+                if let Some(pos) = topics.iter().position(|(id, _score)| *id == up_id) {
+                    if pos < topics.len() - 1 && topics.len() > 1 {
+                        topics[pos].1 += 1;
+                        topics[pos + 1].1 -= 1;
+                        for (id, score) in topics {
+                            self.user_topics.entry(id).and_modify(|topic| {
+                                if topic.score != score {
+                                    topic.score = score;
+                                    ctx.link().send_message(Msg::StoreUserTopicScore(id));
+                                }
+                            });
+                        }
+                    }
+                }
                 true
             }
         }
@@ -928,12 +1031,12 @@ impl Component for Model {
                         <div class="col">{ text }</div>
                         <div class="col">
                             <button
-                                onclick={ctx.link().callback(move |_| Msg::TopicUp(id))}
+                                onclick={ctx.link().callback(move |_| Msg::UserTopicUp(id))}
                                 type={"button"}
                                 class={"btn"}
                             >{ up_arrow() }</button>
                             <button
-                                onclick={ctx.link().callback(move |_| Msg::TopicDown(id))}
+                                onclick={ctx.link().callback(move |_| Msg::UserTopicDown(id))}
                                 type={"button"}
                                 class={"btn"}
                             >{ down_arrow() }</button>
