@@ -93,7 +93,7 @@ struct Model {
 }
 
 async fn fetch_user_id() -> Option<String> {
-    let resp = http::Request::get("https://localhost/user_id")
+    let resp = http::Request::get("/user_id")
         .send()
         .await
         .unwrap()
@@ -116,11 +116,7 @@ fn error_from_response(resp: http::Response) -> Error {
 
 async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
     let resp: std::result::Result<MeetingsMessage, gloo_net::Error> =
-        http::Request::get("https://localhost/meetings")
-            .send()
-            .await?
-            .json()
-            .await;
+        http::Request::get("/meetings").send().await?.json().await;
     match resp {
         Ok(msg) => {
             let mut mtgs: Vec<_> = msg
@@ -145,7 +141,7 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
 async fn fetch_n_meeting_participants(
     meeting_id: boxed::Box<u32>,
 ) -> Result<MeetingParticipantsMessage> {
-    let url = format!("https://localhost/meeting/{meeting_id}/participant_counts");
+    let url = format!("/meeting/{meeting_id}/participant_counts");
     let resp: std::result::Result<MeetingParticipantsMessage, gloo_net::Error> =
         http::Request::get(&url).send().await?.json().await;
     match resp {
@@ -156,7 +152,7 @@ async fn fetch_n_meeting_participants(
 
 async fn fetch_registered_meetings() -> Result<Vec<u32>> {
     let resp: std::result::Result<RegisteredMeetingsMessage, gloo_net::Error> =
-        http::Request::get("https://localhost/registered_meetings")
+        http::Request::get("/registered_meetings")
             .send()
             .await?
             .json()
@@ -168,7 +164,7 @@ async fn fetch_registered_meetings() -> Result<Vec<u32>> {
 }
 
 async fn fetch_meeting_topics(meeting_id: boxed::Box<u32>) -> Result<Vec<UserTopic>> {
-    let url = format!("https://localhost/meeting/{meeting_id}/topics");
+    let url = format!("/meeting/{meeting_id}/topics");
     let resp: std::result::Result<UserTopicsMessage, gloo_net::Error> =
         http::Request::get(&url).send().await?.json().await;
     match resp {
@@ -195,7 +191,7 @@ async fn fetch_meeting_topics(meeting_id: boxed::Box<u32>) -> Result<Vec<UserTop
 
 async fn fetch_user_topics() -> Result<HashMap<u32, UserTopic>> {
     let resp: std::result::Result<UserTopicsMessage, gloo_net::Error> =
-        http::Request::get("https://localhost/user_topics")
+        http::Request::get("/user_topics")
             .send()
             .await?
             .json()
@@ -228,19 +224,19 @@ async fn fetch_user_topics() -> Result<HashMap<u32, UserTopic>> {
 }
 
 async fn delete_meeting(id: boxed::Box<u32>) -> Result<()> {
-    let url = format!("https://localhost/meetings/{}", id);
+    let url = format!("/meetings/{}", id);
     gloo_net::http::Request::delete(&url).send().await?;
     Ok(())
 }
 
 async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
-    let url = format!("https://localhost/topics/{}", id);
+    let url = format!("/topics/{}", id);
     gloo_net::http::Request::delete(&url).send().await?;
     Ok(())
 }
 
 async fn store_meeting_score(meeting_id: boxed::Box<u32>, score: boxed::Box<u32>) -> Result<()> {
-    let url = format!("https://localhost/meeting/{}/score", meeting_id);
+    let url = format!("/meeting/{}/score", meeting_id);
     gloo_net::http::Request::put(&url)
         .json(&ScoreMessage { score: *score })?
         .send()
@@ -253,10 +249,7 @@ async fn store_meeting_topic_score(
     topic_id: boxed::Box<u32>,
     score: boxed::Box<u32>,
 ) -> Result<()> {
-    let url = format!(
-        "https://localhost/meeting/{}/topic/{}/score",
-        meeting_id, topic_id
-    );
+    let url = format!("/meeting/{}/topic/{}/score", meeting_id, topic_id);
     gloo_net::http::Request::put(&url)
         .json(&ScoreMessage { score: *score })?
         .send()
@@ -265,7 +258,7 @@ async fn store_meeting_topic_score(
 }
 
 async fn store_user_topic_score(topic_id: boxed::Box<u32>, score: boxed::Box<u32>) -> Result<()> {
-    let url = format!("https://localhost/topic/{}/score", topic_id);
+    let url = format!("/topic/{}/score", topic_id);
     gloo_net::http::Request::put(&url)
         .json(&ScoreMessage { score: *score })?
         .send()
@@ -274,7 +267,7 @@ async fn store_user_topic_score(topic_id: boxed::Box<u32>, score: boxed::Box<u32
 }
 
 async fn attend_meeting(meeting_id: boxed::Box<u32>) -> Result<http::Response> {
-    let url = format!("https://localhost/meeting/{}/attendees", *meeting_id);
+    let url = format!("/meeting/{}/attendees", *meeting_id);
     Ok(gloo_net::http::Request::post(&url).send().await?)
 }
 
@@ -282,7 +275,7 @@ async fn add_new_meeting(name: String) -> Result<http::Response> {
     let new_meeting = NewMeeting {
         name: Cow::from(name),
     };
-    Ok(gloo_net::http::Request::post("https://localhost/meetings")
+    Ok(gloo_net::http::Request::post("/meetings")
         .json(&new_meeting)?
         .send()
         .await?)
@@ -292,7 +285,7 @@ async fn add_new_topic(topic_text: String) -> Result<http::Response> {
     let topic = NewTopicMessage {
         new_topic: topic_text,
     };
-    Ok(gloo_net::http::Request::post("https://localhost/topics")
+    Ok(gloo_net::http::Request::post("/topics")
         .json(&topic)?
         .send()
         .await?)
@@ -300,7 +293,7 @@ async fn add_new_topic(topic_text: String) -> Result<http::Response> {
 
 async fn register_for_meeting(id: boxed::Box<u32>, participate: bool) -> Result<http::Response> {
     let id = *id;
-    let url = format!("https://localhost/meeting/{id}/participants");
+    let url = format!("/meeting/{id}/participants");
     Ok(gloo_net::http::Request::post(&url)
         .json(&ParticipateMeetingMessage { participate })?
         .send()
