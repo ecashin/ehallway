@@ -84,7 +84,7 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_DB_ASSETS: [&str; 12] = [
+const CREATE_DB_ASSETS: [&str; 13] = [
     "
     drop function if exists epeers
     ",
@@ -127,12 +127,11 @@ const CREATE_DB_ASSETS: [&str; 12] = [
     )
     ",
     "
-    create table if not exists user_topics (
+    create table if not exists meeting_topics (
         email varchar (254) not null,
-        topic varchar (254) not null,
-        id bigserial primary key,
+        meeting bigint not null,
         score integer default 0
-    );
+    )
     ",
     "
     create table if not exists meetings (
@@ -147,10 +146,6 @@ const CREATE_DB_ASSETS: [&str; 12] = [
     );
     ",
     "
-    create unique index if not exists user_mtg_attendee_idx
-    on meeting_attendees (meeting, email);
-    ",
-    "
     create table if not exists meeting_participants (
         meeting bigint not null,
         email varchar (254) not null
@@ -160,6 +155,18 @@ const CREATE_DB_ASSETS: [&str; 12] = [
     create table if not exists meeting_scores (
         meeting bigint not null,
         email varchar (254) not null,
+        score integer default 0
+    );
+    ",
+    "
+    create unique index if not exists user_mtg_attendee_idx
+    on meeting_attendees (meeting, email);
+    ",
+    "
+    create table if not exists user_topics (
+        email varchar (254) not null,
+        topic varchar (254) not null,
+        id bigserial primary key,
         score integer default 0
     );
     ",
@@ -272,7 +279,7 @@ async fn start_meeting(
 }
 
 #[post("/meeting/<id>/participants", data = "<msg>", format = "json")]
-async fn meeting_participate(
+async fn meeting_register(
     client: &State<sync::Arc<Client>>,
     user: User,
     id: u32,
@@ -647,7 +654,7 @@ async fn main() -> anyhow::Result<()> {
                 get_user_topics,
                 get_user_id,
                 get_login,
-                meeting_participate,
+                meeting_register,
                 post_signup,
                 get_signup,
                 logout,
