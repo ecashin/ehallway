@@ -32,7 +32,7 @@ enum Msg {
     DeleteMeeting(u32),
     DeleteTopic(u32),
     DidStoreMeetingScore,
-    DidStoreMeetingTopicScore,
+    DidStoreMeetingTopicScore(boxed::Box<u32>),
     DidStoreUserTopicScore,
     FetchNMeetingParticipants(u32),
     FetchMeetingTopics(u32),
@@ -678,9 +678,10 @@ impl Component for Model {
                 });
                 true
             }
-            Msg::DidStoreMeetingTopicScore => {
-                // XXX -- Not refreshing from DB.
-                true
+            Msg::DidStoreMeetingTopicScore(meeting_id) => {
+                ctx.link()
+                    .send_message(Msg::FetchMeetingTopics(*meeting_id));
+                false
             }
             Msg::DidStoreUserTopicScore => {
                 // XXX -- Not refreshing from DB.
@@ -847,8 +848,8 @@ impl Component for Model {
                     let topic_id = boxed::Box::new(id);
                     let meeting_id = boxed::Box::new(self.attending_meeting.unwrap());
                     ctx.link().send_future(async {
-                        match store_meeting_topic_score(meeting_id, topic_id, score).await {
-                            Ok(_) => Msg::DidStoreMeetingTopicScore,
+                        match store_meeting_topic_score(meeting_id.clone(), topic_id, score).await {
+                            Ok(_) => Msg::DidStoreMeetingTopicScore(meeting_id),
                             Err(e) => Msg::LogError(e),
                         }
                     });

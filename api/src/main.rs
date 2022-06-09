@@ -84,7 +84,7 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_DB_ASSETS: [&str; 13] = [
+const CREATE_DB_ASSETS: [&str; 14] = [
     "
     drop function if exists epeers
     ",
@@ -130,8 +130,13 @@ const CREATE_DB_ASSETS: [&str; 13] = [
     create table if not exists meeting_topics (
         email varchar (254) not null,
         meeting bigint not null,
+        topic bigint not null,
         score integer default 0
     )
+    ",
+    "
+    create unique index if not exists meeting_topics_idx
+    on meeting_topics (meeting, email, topic);
     ",
     "
     create table if not exists meetings (
@@ -359,19 +364,39 @@ async fn add_new_topic(
 #[post("/meeting/<id>/attendees")]
 async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
     let identifier = id as i64;
-    client
-        .execute(
+    let stmt = client
+        .prepare(
             "
             insert into meeting_attendees
             (meeting, email)
             values
             ($1, $2)
             on conflict (meeting, email) do nothing
+            returning meeting
         ",
-            &[&identifier, &user.email()],
         )
         .await
         .unwrap();
+    let rows = client
+        .query(&stmt, &[&identifier, &user.email()])
+        .await
+        .unwrap();
+    if rows.len() == 1 {
+        let topics = get_meeting_topics_vec(client, identifier).await;
+        let sql = "
+            insert into meeting_topics (email, meeting, topic, score)
+            values ($1, $2, $3, $4)
+        ";
+        let stmt = client.prepare(sql).await.unwrap();
+        for topic in topics {
+            let t_id = topic.id as i64;
+            let score = topic.score as i32;
+            client
+                .execute(&stmt, &[&user.email(), &identifier, &t_id, &score])
+                .await
+                .unwrap();
+        }
+    }
     json!({ "attending": id })
 }
 
@@ -423,6 +448,37 @@ async fn store_meeting_score(
     json!({ "stored": score })
 }
 
+#[put(
+    "/meeting/<meeting_id>/topic/<topic_id>/score",
+    format = "json",
+    data = "<score_msg>"
+)]
+async fn store_meeting_topic_score(
+    user: User,
+    client: &State<sync::Arc<Client>>,
+    meeting_id: u32,
+    topic_id: u32,
+    score_msg: Json<ScoreMessage>,
+) -> Value {
+    let m_id = meeting_id as i64;
+    let t_id = topic_id as i64;
+    let score = score_msg.score as i32;
+    client
+        .execute(
+            "insert into meeting_topics
+                (meeting, email, topic, score)
+                values
+                ($1, $2, $3, $4)
+            on conflict (meeting, email, topic) do update
+                set score = excluded.score
+            ",
+            &[&m_id, &user.email(), &t_id, &score],
+        )
+        .await
+        .unwrap();
+    json!({ "stored": score })
+}
+
 const GET_SCORED_MEETINGS: &str = "
     select meetings.name, meetings.id, coalesce(score,0) as score
     from meetings left outer join
@@ -461,13 +517,7 @@ async fn get_meeting_participants(
     .into()
 }
 
-#[get("/meeting/<id>/topics")]
-async fn get_meeting_topics(
-    _user: User,
-    client: &State<sync::Arc<Client>>,
-    id: u32,
-) -> Json<UserTopicsMessage> {
-    let id = id as i64;
+async fn get_meeting_topics_vec(client: &State<sync::Arc<Client>>, id: i64) -> Vec<UserTopic> {
     let stmt = client
         .prepare(
             "
@@ -486,8 +536,7 @@ async fn get_meeting_topics(
         .await
         .unwrap();
     let rows = client.query(&stmt, &[&id]).await.unwrap();
-    let topics: Vec<_> = rows
-        .iter()
+    rows.iter()
         .enumerate()
         .map(|(i, row)| {
             let text = row.get::<_, String>(0);
@@ -500,8 +549,19 @@ async fn get_meeting_topics(
                 id: id as u32,
             }
         })
-        .collect();
-    UserTopicsMessage { topics }.into()
+        .collect::<Vec<_>>()
+}
+
+#[get("/meeting/<id>/topics")]
+async fn get_meeting_topics(
+    _user: User,
+    client: &State<sync::Arc<Client>>,
+    id: u32,
+) -> Json<UserTopicsMessage> {
+    UserTopicsMessage {
+        topics: get_meeting_topics_vec(client, id as i64).await,
+    }
+    .into()
 }
 
 #[get("/registered_meetings")]
@@ -661,6 +721,7 @@ async fn main() -> anyhow::Result<()> {
                 post_login,
                 start_meeting,
                 store_meeting_score,
+                store_meeting_topic_score,
                 delete,
                 show_all_users
             ],
