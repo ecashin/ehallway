@@ -1,17 +1,13 @@
 // It would be nice to use tallystick, but I don't want to use nightly.
 use anyhow::{anyhow, Result};
 
+use crate::ranking::argsort;
+
 pub struct Ranking {
     // Entries are ordered to correspond to an array of choices.
     // Values are scores, with higher scores preferred.
     // Only the score order is used to determine the ranking.
     pub scores: Vec<usize>,
-}
-
-fn argsort(a: &[usize]) -> Vec<usize> {
-    let mut indexed: Vec<_> = a.iter().enumerate().collect();
-    indexed.sort_by(|(_ai, av), (_bi, bv)| av.partial_cmp(bv).unwrap());
-    indexed.iter().map(|(i, _v)| *i).collect::<Vec<usize>>()
 }
 
 pub fn borda_count(rankings: &[Ranking]) -> Result<Vec<usize>> {

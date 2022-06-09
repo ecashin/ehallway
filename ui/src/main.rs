@@ -41,8 +41,6 @@ enum Msg {
     MeetingDown(u32),
     MeetingRegisteredChanged,
     MeetingToggleRegistered(u32),
-    MeetingTopicDown(u32),
-    MeetingTopicUp(u32),
     MeetingUp(u32),
     Noop,
     SetNRegisteredNJoined((u32, u32)),
@@ -53,7 +51,7 @@ enum Msg {
     SetUserId(String),
     SetUserTopics(HashMap<u32, UserTopic>), // set in Model
     StoreMeetingScore(u32),                 // store to database
-    StoreMeetingTopicScore(u32),
+    StoreMeetingTopicScore((u32, u32)),     // (id, score)
     StoreUserTopicScore(u32),
     UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
@@ -85,7 +83,7 @@ struct Model {
     n_attending_meeting_registered: Option<u32>,
     n_attending_meeting_joined: Option<u32>,
     registered_meetings: HashSet<u32>,
-    meeting_topics: Option<HashMap<u32, UserTopic>>,
+    meeting_topics: Option<Vec<UserTopic>>,
     meetings: HashMap<u32, (String, u32)>,
     new_meeting_text: String,
     new_topic_text: String,
@@ -361,25 +359,13 @@ impl Model {
                 html! {}
             };
             let meeting_topics_html = if let Some(topics) = &self.meeting_topics {
-                let items: Vec<_> = topics
-                    .iter()
-                    .map(|(id, topic)| {
-                        let txt = topic.text.clone();
-                        assert_eq!(*id, topic.id);
-                        let id = topic.id;
-                        html! {
-                            <ranking::Rankable
-                                label={txt}
-                                on_down={ctx.link().callback(move |_| Msg::MeetingTopicUp(id))}
-                                on_up={ctx.link().callback(move |_| Msg::MeetingTopicUp(id))}
-                                on_delete={None} />
-                        }
-                    })
-                    .collect();
                 html! {
-                    <ul>
-                        { items }
-                    </ul>
+                    <ranking::Ranking
+                        ids={topics.iter().map(|t| t.id).collect::<Vec<u32>>()}
+                        labels={topics.iter().map(|t| t.text.clone()).collect::<Vec<String>>()}
+                        scores={topics.iter().map(|t| t.score).collect::<Vec<u32>>()}
+                        store_score={ctx.link().callback(Msg::StoreMeetingTopicScore)}
+                    />
                 }
             } else {
                 html! {}
@@ -779,55 +765,6 @@ impl Component for Model {
                 }
                 true
             }
-            // These are like the user-topic up/down
-            Msg::MeetingTopicDown(down_id) => {
-                if self.meeting_topics.is_some() {
-                    let mut topics =
-                        self.sorted_by_score_topics(self.meeting_topics.as_ref().unwrap());
-                    if let Some(pos) = topics.iter().position(|(id, _score)| *id == down_id) {
-                        if pos > 0 && topics.len() > 1 {
-                            topics[pos].1 -= 1;
-                            topics[pos - 1].1 += 1;
-                            for (id, score) in topics {
-                                self.meeting_topics.as_mut().unwrap().entry(id).and_modify(
-                                    |topic| {
-                                        if topic.score != score {
-                                            topic.score = score;
-                                            ctx.link()
-                                                .send_message(Msg::StoreMeetingTopicScore(id));
-                                        }
-                                    },
-                                );
-                            }
-                        }
-                    }
-                }
-                true
-            }
-            Msg::MeetingTopicUp(up_id) => {
-                if self.meeting_topics.is_some() {
-                    let mut topics =
-                        self.sorted_by_score_topics(self.meeting_topics.as_ref().unwrap());
-                    if let Some(pos) = topics.iter().position(|(id, _score)| *id == up_id) {
-                        if pos < topics.len() - 1 && topics.len() > 1 {
-                            topics[pos].1 += 1;
-                            topics[pos + 1].1 -= 1;
-                            for (id, score) in topics {
-                                self.meeting_topics.as_mut().unwrap().entry(id).and_modify(
-                                    |topic| {
-                                        if topic.score != score {
-                                            topic.score = score;
-                                            ctx.link()
-                                                .send_message(Msg::StoreMeetingTopicScore(id));
-                                        }
-                                    },
-                                );
-                            }
-                        }
-                    }
-                }
-                true
-            }
             Msg::MeetingUp(up_id) => {
                 let mut mtgs = self.sorted_by_score_meetings();
                 if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == up_id) {
@@ -839,7 +776,7 @@ impl Component for Model {
                                 let modified = *entry_score != score;
                                 *entry_score = score;
                                 if modified {
-                                    ctx.link().send_message(Msg::StoreMeetingTopicScore(id));
+                                    ctx.link().send_message(Msg::StoreMeetingScore(id));
                                 }
                             });
                         }
@@ -849,7 +786,6 @@ impl Component for Model {
             }
             Msg::Noop => true,
             Msg::SetMeetingTopics(topics) => {
-                let topics: HashMap<_, _> = topics.into_iter().map(|t| (t.id, t)).collect();
                 self.meeting_topics = Some(topics);
                 true
             }
@@ -912,21 +848,17 @@ impl Component for Model {
                 }
                 true
             }
-            Msg::StoreMeetingTopicScore(id) => {
+            Msg::StoreMeetingTopicScore((id, score)) => {
                 if self.meeting_topics.is_some() {
-                    if let Some(topic) = self.meeting_topics.as_mut().unwrap().get(&id) {
-                        let score = boxed::Box::new(topic.score);
-                        let topic_id = boxed::Box::new(id);
-                        let meeting_id = boxed::Box::new(self.attending_meeting.unwrap());
-                        ctx.link().send_future(async {
-                            match store_meeting_topic_score(meeting_id, topic_id, score).await {
-                                Ok(_) => Msg::DidStoreMeetingTopicScore,
-                                Err(e) => Msg::LogError(e),
-                            }
-                        });
-                    } else {
-                        js::console_log(JsValue::from(format!("topic ID without score: {id}",)));
-                    }
+                    let score = boxed::Box::new(score);
+                    let topic_id = boxed::Box::new(id);
+                    let meeting_id = boxed::Box::new(self.attending_meeting.unwrap());
+                    ctx.link().send_future(async {
+                        match store_meeting_topic_score(meeting_id, topic_id, score).await {
+                            Ok(_) => Msg::DidStoreMeetingTopicScore,
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
                 }
                 true
             }
