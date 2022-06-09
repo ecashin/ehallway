@@ -86,7 +86,7 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
 
 const CREATE_DB_ASSETS: [&str; 12] = [
     "
-    drop function epeers
+    drop function if exists epeers
     ",
     "
     CREATE FUNCTION epeers(uid varchar, mtg bigint) RETURNS table (email varchar) AS $$
