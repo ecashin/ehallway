@@ -480,6 +480,28 @@ async fn store_meeting_topic_score(
     json!({ "stored": score })
 }
 
+#[put("/topic/<topic_id>/score", format = "json", data = "<score_msg>")]
+async fn store_user_topic_score(
+    user: User,
+    client: &State<sync::Arc<Client>>,
+    topic_id: u32,
+    score_msg: Json<ScoreMessage>,
+) -> Value {
+    let t_id = topic_id as i64;
+    let score = score_msg.score as i32;
+    client
+        .execute(
+            "update user_topics
+             set score = $3
+             where email = $1 and id = $2
+            ",
+            &[&user.email(), &t_id, &score],
+        )
+        .await
+        .unwrap();
+    json!({ "stored": score })
+}
+
 const GET_SCORED_MEETINGS: &str = "
     select meetings.name, meetings.id, coalesce(score,0) as score
     from meetings left outer join
@@ -751,6 +773,7 @@ async fn main() -> anyhow::Result<()> {
                 start_meeting,
                 store_meeting_score,
                 store_meeting_topic_score,
+                store_user_topic_score,
                 delete,
                 show_all_users
             ],

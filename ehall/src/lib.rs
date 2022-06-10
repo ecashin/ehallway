@@ -61,7 +61,7 @@ pub struct UserIdMessage {
     pub email: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserTopic {
     pub text: String,
     pub score: u32,

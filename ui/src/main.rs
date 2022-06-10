@@ -30,12 +30,13 @@ enum Msg {
     AttendingMeeting(boxed::Box<u32>),
     AttendMeeting(u32),
     DeleteMeeting(u32),
-    DeleteTopic(u32),
+    DeleteUserTopic(u32),
     DidStoreMeetingScore,
     DidStoreMeetingTopicScore(boxed::Box<u32>),
     DidStoreUserTopicScore,
     FetchNMeetingParticipants(u32),
     FetchMeetingTopics(u32),
+    FetchUserTopics,
     LeaveMeeting,
     LogError(Error),
     MeetingDown(u32),
@@ -49,14 +50,12 @@ enum Msg {
     SetMeetingTopics(Vec<UserTopic>),
     SetTab(Tab),
     SetUserId(String),
-    SetUserTopics(HashMap<u32, UserTopic>), // set in Model
-    StoreMeetingScore(u32),                 // store to database
-    StoreMeetingTopicScore((u32, u32)),     // (id, score)
-    StoreUserTopicScore(u32),
+    SetUserTopics(Vec<UserTopic>),      // set in Model
+    StoreMeetingScore(u32),             // store to database
+    StoreMeetingTopicScore((u32, u32)), // (id, score)
+    StoreUserTopicScore((u32, u32)),    // (id, score)
     UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
-    UserTopicDown(u32),
-    UserTopicUp(u32),
 }
 
 enum UserIdState {
@@ -88,7 +87,7 @@ struct Model {
     new_meeting_text: String,
     new_topic_text: String,
     user_id: UserIdState,
-    user_topics: HashMap<u32, UserTopic>,
+    user_topics: Vec<UserTopic>,
     active_tab: Tab,
 }
 
@@ -189,7 +188,7 @@ async fn fetch_meeting_topics(meeting_id: boxed::Box<u32>) -> Result<Vec<UserTop
     }
 }
 
-async fn fetch_user_topics() -> Result<HashMap<u32, UserTopic>> {
+async fn fetch_user_topics() -> Result<Vec<UserTopic>> {
     let resp: std::result::Result<UserTopicsMessage, gloo_net::Error> =
         http::Request::get("/user_topics")
             .send()
@@ -204,20 +203,29 @@ async fn fetch_user_topics() -> Result<HashMap<u32, UserTopic>> {
                 let UserTopic { score: b_score, .. } = b;
                 a_score.partial_cmp(b_score).unwrap()
             });
-            Ok(topics
+            let orig_scores: Vec<_> = topics.iter().map(|t| t.score).collect();
+            let topics: Vec<_> = topics
                 .into_iter()
                 .enumerate()
-                .map(|(score, UserTopic { text, id, .. })| {
-                    (
-                        id,
-                        UserTopic {
-                            id,
-                            text,
-                            score: score as u32,
-                        },
-                    )
+                .map(|(score, UserTopic { text, id, .. })| UserTopic {
+                    id,
+                    text,
+                    score: score as u32,
                 })
-                .collect::<HashMap<_, _>>())
+                .collect();
+            let canonical_scores: Vec<_> = topics.iter().map(|t| t.score).collect();
+            if orig_scores != canonical_scores {
+                js::console_log(JsValue::from(format!(
+                    "scores {:?} -> {:?}",
+                    orig_scores, canonical_scores
+                )));
+                for t in topics.iter() {
+                    store_user_topic_score(boxed::Box::new(t.id), boxed::Box::new(t.score))
+                        .await
+                        .unwrap();
+                }
+            }
+            Ok(topics)
         }
         Err(e) => Err(e.into()),
     }
@@ -229,7 +237,7 @@ async fn delete_meeting(id: boxed::Box<u32>) -> Result<()> {
     Ok(())
 }
 
-async fn delete_topic(id: boxed::Box<u32>) -> Result<()> {
+async fn delete_user_topic(id: boxed::Box<u32>) -> Result<()> {
     let url = format!("/topics/{}", id);
     gloo_net::http::Request::delete(&url).send().await?;
     Ok(())
@@ -504,24 +512,6 @@ impl Model {
         mtgs
     }
 
-    fn sorted_by_score_topics(&self, topics: &HashMap<u32, UserTopic>) -> Vec<(u32, u32)> {
-        let mut topics: Vec<_> = topics
-            .iter()
-            .map(
-                |(
-                    _,
-                    UserTopic {
-                        id,
-                        score,
-                        text: _text,
-                    },
-                )| (*id, *score),
-            )
-            .collect();
-        topics.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
-        topics
-    }
-
     fn tabs_html(&self, ctx: &Context<Self>) -> Html {
         let item_class = |tag| {
             if self.active_tab == tag {
@@ -570,7 +560,7 @@ impl Component for Model {
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
             user_id: UserIdState::New,
-            user_topics: HashMap::new(),
+            user_topics: vec![],
             active_tab: Tab::TopicManagment,
         };
         model.fetch_user("create", ctx);
@@ -594,12 +584,7 @@ impl Component for Model {
             }
             Msg::AddedTopic => {
                 self.new_topic_text = "".to_owned();
-                ctx.link().send_future(async {
-                    match fetch_user_topics().await {
-                        Ok(topics) => Msg::SetUserTopics(topics),
-                        Err(e) => Msg::LogError(e),
-                    }
-                });
+                ctx.link().send_message(Msg::FetchUserTopics);
                 true
             }
             Msg::AddMeeting => {
@@ -659,10 +644,10 @@ impl Component for Model {
                 });
                 true
             }
-            Msg::DeleteTopic(id) => {
+            Msg::DeleteUserTopic(id) => {
                 let id = boxed::Box::new(id);
                 ctx.link().send_future(async {
-                    match delete_topic(id).await {
+                    match delete_user_topic(id).await {
                         Ok(_) => Msg::AddedTopic,
                         Err(e) => Msg::LogError(e),
                     }
@@ -684,8 +669,8 @@ impl Component for Model {
                 false
             }
             Msg::DidStoreUserTopicScore => {
-                // XXX -- Not refreshing from DB.
-                true
+                ctx.link().send_message(Msg::FetchUserTopics);
+                false
             }
             Msg::FetchNMeetingParticipants(meeting_id) => {
                 let id = boxed::Box::new(meeting_id);
@@ -705,6 +690,20 @@ impl Component for Model {
                 ctx.link().send_future(async {
                     match fetch_meeting_topics(id).await {
                         Ok(topics) => Msg::SetMeetingTopics(topics),
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
+                true
+            }
+            Msg::FetchUserTopics => {
+                ctx.link().send_future(async {
+                    match fetch_user_topics().await {
+                        Ok(topics) => {
+                            for t in topics.iter() {
+                                js::console_log(JsValue::from(&format!("{:?}", t)));
+                            }
+                            Msg::SetUserTopics(topics)
+                        }
                         Err(e) => Msg::LogError(e),
                     }
                 });
@@ -856,19 +855,15 @@ impl Component for Model {
                 }
                 true
             }
-            Msg::StoreUserTopicScore(id) => {
-                if let Some(topic) = self.user_topics.get(&id) {
-                    let score = boxed::Box::new(topic.score);
-                    let id = boxed::Box::new(id);
-                    ctx.link().send_future(async {
-                        match store_user_topic_score(id, score).await {
-                            Ok(_) => Msg::DidStoreUserTopicScore,
-                            Err(e) => Msg::LogError(e),
-                        }
-                    });
-                } else {
-                    js::console_log(JsValue::from(format!("topic ID without score: {id}",)));
-                }
+            Msg::StoreUserTopicScore((id, score)) => {
+                let score = boxed::Box::new(score);
+                let id = boxed::Box::new(id);
+                ctx.link().send_future(async {
+                    match store_user_topic_score(id, score).await {
+                        Ok(_) => Msg::DidStoreUserTopicScore,
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
                 true
             }
             Msg::UpdateNewMeetingText(text) => {
@@ -877,43 +872,6 @@ impl Component for Model {
             }
             Msg::UpdateNewTopicText(text) => {
                 self.new_topic_text = text;
-                true
-            }
-            // These are like the meeting-topic up/down
-            Msg::UserTopicDown(down_id) => {
-                let mut topics = self.sorted_by_score_topics(&self.user_topics);
-                if let Some(pos) = topics.iter().position(|(id, _score)| *id == down_id) {
-                    if pos > 0 && topics.len() > 1 {
-                        topics[pos].1 -= 1;
-                        topics[pos - 1].1 += 1;
-                        for (id, score) in topics {
-                            self.user_topics.entry(id).and_modify(|topic| {
-                                if topic.score != score {
-                                    topic.score = score;
-                                    ctx.link().send_message(Msg::StoreUserTopicScore(id));
-                                }
-                            });
-                        }
-                    }
-                }
-                true
-            }
-            Msg::UserTopicUp(up_id) => {
-                let mut topics = self.sorted_by_score_topics(&self.user_topics);
-                if let Some(pos) = topics.iter().position(|(id, _score)| *id == up_id) {
-                    if pos < topics.len() - 1 && topics.len() > 1 {
-                        topics[pos].1 += 1;
-                        topics[pos + 1].1 -= 1;
-                        for (id, score) in topics {
-                            self.user_topics.entry(id).and_modify(|topic| {
-                                if topic.score != score {
-                                    topic.score = score;
-                                    ctx.link().send_message(Msg::StoreUserTopicScore(id));
-                                }
-                            });
-                        }
-                    }
-                }
                 true
             }
         }
@@ -942,40 +900,15 @@ impl Component for Model {
         } else {
             html! {}
         };
-        let mut topics: Vec<_> = self
-            .user_topics
-            .iter()
-            .map(|(_, UserTopic { id, score, text })| (*id, text, *score))
-            .collect();
-        topics.sort_by(|(_, _, a_score), (_, _, b_score)| a_score.partial_cmp(b_score).unwrap());
-        let topics: Vec<_> = topics
-            .into_iter()
-            .rev()
-            .map(|(id, text, _score)| {
-                html! {
-                    <div class="row">
-                        <div class="col">{ text }</div>
-                        <div class="col">
-                            <button
-                                onclick={ctx.link().callback(move |_| Msg::UserTopicUp(id))}
-                                type={"button"}
-                                class={"btn"}
-                            >{ up_arrow() }</button>
-                            <button
-                                onclick={ctx.link().callback(move |_| Msg::UserTopicDown(id))}
-                                type={"button"}
-                                class={"btn"}
-                            >{ down_arrow() }</button>
-                            <button
-                                onclick={ctx.link().callback(move |_| Msg::DeleteTopic(id))}
-                                type={"button"}
-                                class={"btn"}
-                            >{ x_icon() }</button>
-                        </div>
-                    </div>
-                }
-            })
-            .collect();
+        let topics_html = html! {
+            <ranking::Ranking
+                ids={self.user_topics.iter().map(|t| t.id).collect::<Vec<u32>>()}
+                labels={self.user_topics.iter().map(|t| t.text.clone()).collect::<Vec<String>>()}
+                scores={self.user_topics.iter().map(|t| t.score).collect::<Vec<u32>>()}
+                store_score={ctx.link().callback(Msg::StoreUserTopicScore)}
+                delete={Some(ctx.link().callback(Msg::DeleteUserTopic))}
+            />
+        };
         let main_panel = html! {
             <div>
                 { self.tabs_html(ctx) }
@@ -985,7 +918,7 @@ impl Component for Model {
                             html! {
                                 <div>
                                     { new_topic }
-                                    <div class="container">{ topics }</div>
+                                    <div class="container">{ topics_html }</div>
                                 </div>
                             }
                         }
