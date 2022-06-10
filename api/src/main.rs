@@ -382,10 +382,11 @@ async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) 
         .await
         .unwrap();
     if rows.len() == 1 {
-        let topics = get_meeting_topics_vec(client, identifier).await;
+        let topics = get_meeting_topics_vec(client, &user.email(), identifier).await;
         let sql = "
             insert into meeting_topics (email, meeting, topic, score)
             values ($1, $2, $3, $4)
+            on conflict (email, meeting, topic) do nothing
         ";
         let stmt = client.prepare(sql).await.unwrap();
         for topic in topics {
@@ -517,7 +518,35 @@ async fn get_meeting_participants(
     .into()
 }
 
-async fn get_meeting_topics_vec(client: &State<sync::Arc<Client>>, id: i64) -> Vec<UserTopic> {
+async fn get_meeting_topics_vec(
+    client: &State<sync::Arc<Client>>,
+    email: &str,
+    meeting: i64,
+) -> Vec<UserTopic> {
+    let sql = "
+        select topic as text, m.id, m.score from user_topics u
+        join
+        (select topic as id, score from meeting_topics
+        where meeting = $1 and email = $2) m
+        on u.id = m.id;
+    ";
+    let stmt = client.prepare(sql).await.unwrap();
+    let rows = client.query(&stmt, &[&meeting, &email]).await.unwrap();
+    let initial_topics = get_meeting_topics_initial(client, meeting).await;
+    if rows.len() >= initial_topics.len() {
+        rows.into_iter()
+            .map(|row| UserTopic {
+                text: row.get::<_, String>(0),
+                score: row.get::<_, i32>(2) as u32,
+                id: row.get::<_, i64>(1) as u32,
+            })
+            .collect()
+    } else {
+        initial_topics
+    }
+}
+
+async fn get_meeting_topics_initial(client: &State<sync::Arc<Client>>, id: i64) -> Vec<UserTopic> {
     let stmt = client
         .prepare(
             "
@@ -554,12 +583,12 @@ async fn get_meeting_topics_vec(client: &State<sync::Arc<Client>>, id: i64) -> V
 
 #[get("/meeting/<id>/topics")]
 async fn get_meeting_topics(
-    _user: User,
+    user: User,
     client: &State<sync::Arc<Client>>,
     id: u32,
 ) -> Json<UserTopicsMessage> {
     UserTopicsMessage {
-        topics: get_meeting_topics_vec(client, id as i64).await,
+        topics: get_meeting_topics_vec(client, &user.email(), id as i64).await,
     }
     .into()
 }
