@@ -122,6 +122,14 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
                 .map(|mm| (mm.meeting.id, (mm.meeting.name.clone(), mm.score)))
                 .collect();
             mtgs.sort_by(|(_, (_, a)), (_, (_, b))| a.partial_cmp(b).unwrap());
+            for (canonical_score, (id, (_name, score))) in mtgs.iter().enumerate() {
+                let cscore = canonical_score as u32;
+                if *score != cscore {
+                    store_meeting_score(boxed::Box::new(*id), boxed::Box::new(cscore))
+                        .await
+                        .unwrap();
+                }
+            }
             Ok(mtgs
                 .into_iter()
                 .enumerate()
