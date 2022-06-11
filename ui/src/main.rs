@@ -1,8 +1,4 @@
-use std::{
-    borrow::Cow,
-    boxed,
-    collections::{HashMap, HashSet},
-};
+use std::{borrow::Cow, boxed, collections::HashSet};
 
 use anyhow::{anyhow, Error, Result};
 use gloo_net::http;
@@ -21,6 +17,12 @@ mod cull;
 mod js;
 mod ranking;
 mod svg;
+
+struct Meeting {
+    id: u32,
+    name: String,
+    score: u32,
+}
 
 enum Msg {
     AddMeeting,
@@ -44,7 +46,7 @@ enum Msg {
     Noop,
     SetNRegisteredNJoined((u32, u32)),
     SetRegisteredMeetings(Vec<u32>),
-    SetMeetings(HashMap<u32, (String, u32)>),
+    SetMeetings(Vec<Meeting>),
     SetMeetingTopics(Vec<UserTopic>),
     SetTab(Tab),
     SetUserId(String),
@@ -81,7 +83,7 @@ struct Model {
     n_attending_meeting_joined: Option<u32>,
     registered_meetings: HashSet<u32>,
     meeting_topics: Option<Vec<UserTopic>>,
-    meetings: HashMap<u32, (String, u32)>,
+    meetings: Vec<Meeting>,
     new_meeting_text: String,
     new_topic_text: String,
     user_id: UserIdState,
@@ -111,7 +113,7 @@ fn error_from_response(resp: http::Response) -> Error {
     anyhow!("response status {status}: {}", resp.status_text())
 }
 
-async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
+async fn fetch_meetings() -> Result<Vec<Meeting>> {
     let resp: std::result::Result<MeetingsMessage, gloo_net::Error> =
         http::Request::get("/meetings").send().await?.json().await;
     match resp {
@@ -119,25 +121,30 @@ async fn fetch_meetings() -> Result<HashMap<u32, (String, u32)>> {
             let mut mtgs: Vec<_> = msg
                 .meetings
                 .iter()
-                .map(|mm| (mm.meeting.id, (mm.meeting.name.clone(), mm.score)))
+                .map(|mm| Meeting {
+                    id: mm.meeting.id,
+                    name: mm.meeting.name.clone(),
+                    score: mm.score,
+                })
                 .collect();
-            mtgs.sort_by(|(_, (_, a)), (_, (_, b))| a.partial_cmp(b).unwrap());
-            for (canonical_score, (id, (_name, score))) in mtgs.iter().enumerate() {
+            mtgs.sort_by(|Meeting { score: a, .. }, Meeting { score: b, .. }| {
+                a.partial_cmp(b).unwrap()
+            });
+            let mut canonically_scored_meetings: Vec<_> = vec![];
+            for (canonical_score, Meeting { id, name, score }) in mtgs.iter().enumerate() {
                 let cscore = canonical_score as u32;
                 if *score != cscore {
                     store_meeting_score(boxed::Box::new(*id), boxed::Box::new(cscore))
                         .await
                         .unwrap();
                 }
+                canonically_scored_meetings.push(Meeting {
+                    id: *id,
+                    name: name.clone(),
+                    score: cscore,
+                });
             }
-            Ok(mtgs
-                .into_iter()
-                .enumerate()
-                .map(|(i, mtg)| {
-                    let (id, (name, _score)) = mtg;
-                    (id, (name, i as u32))
-                })
-                .collect::<HashMap<_, _>>())
+            Ok(canonically_scored_meetings)
         }
         Err(e) => Err(e.into()),
     }
@@ -221,10 +228,6 @@ async fn fetch_user_topics() -> Result<Vec<UserTopic>> {
                 .collect();
             let canonical_scores: Vec<_> = topics.iter().map(|t| t.score).collect();
             if orig_scores != canonical_scores {
-                js::console_log(JsValue::from(format!(
-                    "scores {:?} -> {:?}",
-                    orig_scores, canonical_scores
-                )));
                 for t in topics.iter() {
                     store_user_topic_score(boxed::Box::new(t.id), boxed::Box::new(t.score))
                         .await
@@ -343,7 +346,12 @@ impl Model {
 
     fn meeting_attendance_html(&self, ctx: &Context<Self>) -> Html {
         if let Some(meeting_id) = self.attending_meeting {
-            let meeting_name = &self.meetings.get(&meeting_id).unwrap().0;
+            let meeting_name = &self
+                .meetings
+                .iter()
+                .find_map(|m| if m.id == meeting_id { Some(m) } else { None })
+                .unwrap()
+                .name;
             let join_info_html = if let Some(n_registered) = self.n_attending_meeting_registered {
                 let n_joined = self.n_attending_meeting_joined.unwrap();
                 html! {
@@ -429,7 +437,7 @@ impl Model {
         let mut meetings: Vec<_> = self
             .meetings
             .iter()
-            .map(|(id, (name, score))| (*id, name.clone(), *score))
+            .map(|Meeting { id, name, score }| (*id, name.clone(), *score))
             .collect();
         meetings.sort_by(|(_a_id, _a_name, a_score), (_b_id, _b_name, b_score)| {
             b_score.partial_cmp(a_score).unwrap()
@@ -501,7 +509,7 @@ impl Component for Model {
             attending_meeting: None,
             registered_meetings: HashSet::new(),
             meeting_topics: None,
-            meetings: HashMap::new(),
+            meetings: vec![],
             n_attending_meeting_joined: None,
             n_attending_meeting_registered: None,
             new_meeting_text: "".to_owned(),
@@ -645,12 +653,7 @@ impl Component for Model {
             Msg::FetchUserTopics => {
                 ctx.link().send_future(async {
                     match fetch_user_topics().await {
-                        Ok(topics) => {
-                            for t in topics.iter() {
-                                js::console_log(JsValue::from(&format!("{:?}", t)));
-                            }
-                            Msg::SetUserTopics(topics)
-                        }
+                        Ok(topics) => Msg::SetUserTopics(topics),
                         Err(e) => Msg::LogError(e),
                     }
                 });

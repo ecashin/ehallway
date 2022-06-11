@@ -1,3 +1,4 @@
+use wasm_bindgen::JsValue;
 use yew::{html, Callback, Component, Context, Html, Properties};
 
 use crate::svg::{down_arrow, up_arrow, x_icon};
@@ -59,15 +60,18 @@ impl Component for Ranking {
                 }
             }
             Msg::Down(id) => {
-                let order = argsort(&ctx.props().scores);
-                if let Some(pos) = ctx.props().ids.iter().position(|&i| i == id) {
+                let scores = &ctx.props().scores;
+                let ids = &ctx.props().ids;
+                let order = argsort(scores);
+                if let Some(pos) = ids.iter().position(|&i| i == id) {
                     if order[pos] == 0 {
                         false
                     } else {
-                        let below =
-                            ctx.props().ids[order.iter().position(|&i| i == pos - 1).unwrap()];
-                        ctx.props().store_score.emit((below, pos as u32));
-                        ctx.props().store_score.emit((id, (pos - 1) as u32));
+                        let i_below = order.iter().position(|&i| i == order[pos] - 1).unwrap();
+                        ctx.props()
+                            .store_score
+                            .emit((ids[i_below], scores[pos] as u32));
+                        ctx.props().store_score.emit((id, (scores[i_below]) as u32));
                         true
                     }
                 } else {
@@ -83,15 +87,18 @@ impl Component for Ranking {
                 }
             }
             Msg::Up(id) => {
-                let order = argsort(&ctx.props().scores);
-                if let Some(pos) = ctx.props().ids.iter().position(|&i| i == id) {
-                    if order[pos] == order.len() - 1 {
+                let scores = &ctx.props().scores;
+                let ids = &ctx.props().ids;
+                let order = argsort(scores);
+                if let Some(pos) = ids.iter().position(|&i| i == id) {
+                    if order[pos] == ids.len() - 1 {
                         false
                     } else {
-                        let above =
-                            ctx.props().ids[order.iter().position(|&i| i == pos + 1).unwrap()];
-                        ctx.props().store_score.emit((above, pos as u32));
-                        ctx.props().store_score.emit((id, (pos + 1) as u32));
+                        let i_above = order.iter().position(|&i| i == order[pos] + 1).unwrap();
+                        ctx.props()
+                            .store_score
+                            .emit((ids[i_above], scores[pos] as u32));
+                        ctx.props().store_score.emit((id, (scores[i_above]) as u32));
                         true
                     }
                 } else {
