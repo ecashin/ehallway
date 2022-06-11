@@ -9,11 +9,16 @@ pub struct Props {
     pub scores: Vec<u32>,
     pub store_score: Callback<(u32, u32)>,
     pub delete: Option<Callback<u32>>,
+    pub is_registered: Option<Vec<bool>>,
+    pub attend_meeting: Option<Callback<u32>>,
+    pub register_toggle: Option<Callback<u32>>,
 }
 
 pub enum Msg {
+    AttendMeeting(u32),
     Delete(u32),
     Down(u32),
+    RegisterToggle(u32),
     Up(u32),
 }
 
@@ -37,6 +42,14 @@ impl Component for Ranking {
     }
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
+            Msg::AttendMeeting(id) => {
+                if ctx.props().attend_meeting.is_some() {
+                    ctx.props().attend_meeting.as_ref().unwrap().emit(id);
+                    true
+                } else {
+                    false
+                }
+            }
             Msg::Delete(id) => {
                 if ctx.props().delete.is_some() {
                     ctx.props().delete.as_ref().unwrap().emit(id);
@@ -57,6 +70,14 @@ impl Component for Ranking {
                         ctx.props().store_score.emit((id, (pos - 1) as u32));
                         true
                     }
+                } else {
+                    false
+                }
+            }
+            Msg::RegisterToggle(id) => {
+                if ctx.props().register_toggle.is_some() {
+                    ctx.props().register_toggle.as_ref().unwrap().emit(id);
+                    true
                 } else {
                     false
                 }
@@ -86,6 +107,9 @@ impl Component for Ranking {
             ids,
             labels,
             scores,
+            is_registered,
+            attend_meeting,
+            register_toggle,
             ..
         } = ctx.props();
         let order = argsort(scores);
@@ -93,6 +117,48 @@ impl Component for Ranking {
 
         for i in order.into_iter().rev() {
             let id = ids[i];
+            let attend_meeting_html = if attend_meeting.is_some() {
+                let is_reg = is_registered.as_ref().unwrap()[i];
+                html! {
+                    <div class="col">
+                        <button
+                            onclick={ctx.link().callback(move |_| Msg::AttendMeeting(id))}
+                            disabled={!is_reg}
+                            type={"button"}
+                            class={"btn btn-secondary"}
+                        >{"join now"}</button>
+                    </div>
+                }
+            } else {
+                html! {}
+            };
+            let register_toggle_html = if register_toggle.is_some() {
+                let is_reg = is_registered.as_ref().unwrap()[i];
+                let register_id = format!("register{id}");
+                let register_class = if is_reg {
+                    "btn btn-primary"
+                } else {
+                    "btn btn-secondary"
+                };
+                html! {
+                    <div class="col">
+                        <input
+                            id={register_id.clone()}
+                            class="btn-check"
+                            type={"checkbox"}
+                            checked={ is_reg }
+                            autocomplete={"off"}
+                            onclick={ctx.link().callback(move |_| Msg::RegisterToggle(id))}
+                        />
+                        <label
+                            class={register_class}
+                            for={register_id}>{"register"}
+                        </label>
+                    </div>
+                }
+            } else {
+                html! {}
+            };
             let delete_html = if delete.is_some() {
                 html! {
                     <div class="col">
@@ -108,6 +174,8 @@ impl Component for Ranking {
             };
             items.push(html! {
                 <div class={"row"}>
+                    {attend_meeting_html}
+                    {register_toggle_html}
                     <div class="col">
                         {labels[i].clone()}
                     </div>

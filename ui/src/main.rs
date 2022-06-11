@@ -15,7 +15,7 @@ use ehall::{
     ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserIdMessage, UserTopic,
     UserTopicsMessage,
 };
-use svg::{add_icon, down_arrow, up_arrow, x_icon};
+use svg::add_icon;
 
 mod cull;
 mod js;
@@ -39,10 +39,8 @@ enum Msg {
     FetchUserTopics,
     LeaveMeeting,
     LogError(Error),
-    MeetingDown(u32),
     MeetingRegisteredChanged,
     MeetingToggleRegistered(u32),
-    MeetingUp(u32),
     Noop,
     SetNRegisteredNJoined((u32, u32)),
     SetRegisteredMeetings(Vec<u32>),
@@ -51,7 +49,7 @@ enum Msg {
     SetTab(Tab),
     SetUserId(String),
     SetUserTopics(Vec<UserTopic>),      // set in Model
-    StoreMeetingScore(u32),             // store to database
+    StoreMeetingScore((u32, u32)),      // (id, score) - store to database
     StoreMeetingTopicScore((u32, u32)), // (id, score)
     StoreUserTopicScore((u32, u32)),    // (id, score)
     UpdateNewMeetingText(String),
@@ -428,88 +426,29 @@ impl Model {
         meetings.sort_by(|(_a_id, _a_name, a_score), (_b_id, _b_name, b_score)| {
             b_score.partial_cmp(a_score).unwrap()
         });
-        let meetings: Vec<_> = meetings.into_iter()
-        .map(|(meeting_id, name, _score)| {
-            let is_registered = self.registered_meetings.get(&meeting_id).is_some();
-            let register_id = format!("register{meeting_id}");
-            let register_class = if is_registered {
-                "btn btn-primary"
-            } else {
-                "btn btn-secondary"
-            };
+        let meetings_html = {
+            let ids = meetings.iter().map(|m| m.0).collect::<Vec<u32>>();
             html! {
-                <div class="row">
-                    <div class="col">{ name }</div>
-                    <div class="col">
-                        <div class={"container"}>
-                            <div class={"row"}>
-                                <div class="col">
-                                    <button
-                                        onclick={ctx.link().callback(move |_| Msg::AttendMeeting(meeting_id))}
-                                        disabled={!is_registered}
-                                        type={"button"}
-                                        class={"btn btn-secondary"}
-                                    >{"join now"}</button>
-                                </div>
-                                <div class="col">
-                                    <input
-                                        id={register_id.clone()}
-                                        class="btn-check"
-                                        type={"checkbox"}
-                                        checked={ is_registered }
-                                        autocomplete={"off"}
-                                        onclick={ctx.link().callback(move |_| Msg::MeetingToggleRegistered(meeting_id))}
-                                    />
-                                    <label
-                                        class={register_class}
-                                        for={register_id}>{"register"}
-                                    </label>
-                                </div>
-                                <div class="col">
-                                    <button
-                                    onclick={ctx.link().callback(move |_| Msg::MeetingUp(meeting_id))}
-                                    type={"button"}
-                                    class={"btn"}
-                                    >{ up_arrow() }</button>
-                                    <button
-                                    onclick={ctx.link().callback(move |_| Msg::MeetingDown(meeting_id))}
-                                    type={"button"}
-                                    class={"btn"}
-                                    >{ down_arrow() }</button>
-                                </div>
-                                <div class="col">
-                                    <button
-                                    onclick={ctx.link().callback(move |_| Msg::DeleteMeeting(meeting_id))}
-                                    type={"button"}
-                                    class={"btn"}
-                                    >{ x_icon() }</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <ranking::Ranking
+                    ids={ids.clone()}
+                    labels={meetings.iter().map(|m| m.1.clone()).collect::<Vec<String>>()}
+                    scores={meetings.iter().map(|m| m.2).collect::<Vec<u32>>()}
+                    store_score={ctx.link().callback(Msg::StoreMeetingScore)}
+                    delete={Some(ctx.link().callback(Msg::DeleteMeeting))}
+                    is_registered={Some(ids.iter().map(|id| self.registered_meetings.get(id).is_some()).collect::<Vec<bool>>())}
+                    attend_meeting={Some(ctx.link().callback(Msg::AttendMeeting))}
+                    register_toggle={Some(ctx.link().callback(Msg::MeetingToggleRegistered))}
+                />
             }
-        })
-        .collect();
-
+        };
         html! {
             <div>
                 {new_meeting}
                 <div class="container">
-                    {meetings}
+                    {meetings_html}
                 </div>
             </div>
         }
-    }
-
-    fn sorted_by_score_meetings(&self) -> Vec<(u32, u32)> {
-        let mut mtgs: Vec<_> = self
-            .meetings
-            .iter()
-            .map(|(id, (_name, score))| (*id, *score))
-            .collect();
-        mtgs.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
-        mtgs
     }
 
     fn tabs_html(&self, ctx: &Context<Self>) -> Html {
@@ -718,25 +657,6 @@ impl Component for Model {
                 js::console_log(JsValue::from(format!("{e}")));
                 true
             }
-            Msg::MeetingDown(down_id) => {
-                let mut mtgs = self.sorted_by_score_meetings();
-                if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == down_id) {
-                    if pos > 0 && mtgs.len() > 1 {
-                        mtgs[pos].1 -= 1;
-                        mtgs[pos - 1].1 += 1;
-                        for (id, score) in mtgs {
-                            self.meetings.entry(id).and_modify(|(_, entry_score)| {
-                                let modified = *entry_score != score;
-                                *entry_score = score;
-                                if modified {
-                                    ctx.link().send_message(Msg::StoreMeetingScore(id));
-                                }
-                            });
-                        }
-                    }
-                }
-                true
-            }
             Msg::MeetingRegisteredChanged => {
                 // could refresh participation info here, but worth it?
                 true
@@ -755,25 +675,6 @@ impl Component for Model {
                         register_for_meeting(boxed_id, true).await.unwrap();
                         Msg::MeetingRegisteredChanged
                     });
-                }
-                true
-            }
-            Msg::MeetingUp(up_id) => {
-                let mut mtgs = self.sorted_by_score_meetings();
-                if let Some(pos) = mtgs.iter().position(|(id, _score)| *id == up_id) {
-                    if pos < mtgs.len() - 1 && mtgs.len() > 1 {
-                        mtgs[pos].1 += 1;
-                        mtgs[pos + 1].1 -= 1;
-                        for (id, score) in mtgs {
-                            self.meetings.entry(id).and_modify(|(_, entry_score)| {
-                                let modified = *entry_score != score;
-                                *entry_score = score;
-                                if modified {
-                                    ctx.link().send_message(Msg::StoreMeetingScore(id));
-                                }
-                            });
-                        }
-                    }
                 }
                 true
             }
@@ -823,22 +724,15 @@ impl Component for Model {
                 self.user_topics = topics;
                 true
             }
-            Msg::StoreMeetingScore(meeting_id) => {
-                if let Some((_, score)) = self.meetings.get(&meeting_id) {
-                    let score = boxed::Box::new(*score);
-                    let meeting_id = boxed::Box::new(meeting_id);
-                    ctx.link().send_future(async {
-                        match store_meeting_score(meeting_id, score).await {
-                            Ok(_) => Msg::DidStoreMeetingScore,
-                            Err(e) => Msg::LogError(e),
-                        }
-                    });
-                } else {
-                    js::console_log(JsValue::from(format!(
-                        "meeting ID without score: {:?}",
-                        meeting_id
-                    )));
-                }
+            Msg::StoreMeetingScore((meeting_id, score)) => {
+                let score = boxed::Box::new(score);
+                let meeting_id = boxed::Box::new(meeting_id);
+                ctx.link().send_future(async {
+                    match store_meeting_score(meeting_id, score).await {
+                        Ok(_) => Msg::DidStoreMeetingScore,
+                        Err(e) => Msg::LogError(e),
+                    }
+                });
                 true
             }
             Msg::StoreMeetingTopicScore((id, score)) => {
