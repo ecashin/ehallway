@@ -14,7 +14,6 @@ use ehall::{
 };
 use svg::add_icon;
 
-mod cull;
 mod ranking;
 mod svg;
 

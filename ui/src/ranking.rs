@@ -1,5 +1,7 @@
 use yew::{html, Callback, Component, Context, Html, Properties};
 
+use ehall::argsort;
+
 use crate::svg::{down_arrow, up_arrow, x_icon};
 
 #[derive(Clone, Debug, PartialEq, Properties)]
@@ -20,15 +22,6 @@ pub enum Msg {
     Down(u32),
     RegisterToggle(u32),
     Up(u32),
-}
-
-pub fn argsort<T>(a: &[T]) -> Vec<usize>
-where
-    T: PartialOrd,
-{
-    let mut indexed: Vec<_> = a.iter().enumerate().collect();
-    indexed.sort_by(|(_i1, v1), (_i2, v2)| v1.partial_cmp(v2).unwrap());
-    indexed.into_iter().map(|(i, _v)| i).collect()
 }
 
 pub struct Ranking {}

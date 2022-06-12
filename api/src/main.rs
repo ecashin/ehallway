@@ -24,6 +24,7 @@ use ehall::{
 };
 
 mod chance;
+mod cull;
 
 const N_RETRIES: usize = 10;
 const RETRY_SLEEP_MS: u64 = 100;
@@ -250,6 +251,18 @@ async fn cohort_for_user(client: &Client, meeting_id: i64, email: &str) -> Optio
         time::sleep(time::Duration::from_millis(sleep_ms)).await;
     }
     None
+}
+
+#[put("/meeting/<id>/vote")]
+async fn commit_vote(client: &State<sync::Arc<Client>>, user: User, id: u32) -> Value {
+    let id = id as i64;
+    let sql = "
+        update meeting_attendees
+        set voted = true
+        where email = $1 and meeting = $2
+    ";
+    client.execute(sql, &[&user.email(), &id]).await.unwrap();
+    json!({ "committed_vote": id })
 }
 
 #[put("/meeting/<id>/start")]
@@ -773,6 +786,7 @@ async fn main() -> anyhow::Result<()> {
                 add_new_meeting,
                 add_new_topic,
                 attend_meeting,
+                commit_vote,
                 delete_meeting,
                 delete_topic,
                 get_meeting_participants,

@@ -1,7 +1,7 @@
 // It would be nice to use tallystick, but I don't want to use nightly.
 use anyhow::{anyhow, Result};
 
-use crate::ranking::argsort;
+use ehall::argsort;
 
 pub struct Ranking {
     // Entries are ordered to correspond to an array of choices.
