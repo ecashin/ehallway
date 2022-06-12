@@ -147,7 +147,8 @@ const CREATE_DB_ASSETS: [&str; 14] = [
     "
     create table if not exists meeting_attendees (
         meeting bigint not null,
-        email varchar (254) not null
+        email varchar (254) not null,
+        voted bool default false
     );
     ",
     "
@@ -382,7 +383,7 @@ async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) 
         .await
         .unwrap();
     if rows.len() == 1 {
-        let topics = get_meeting_topics_vec(client, &user.email(), identifier).await;
+        let topics = get_meeting_topics_vec(client, user.email(), identifier).await;
         let sql = "
             insert into meeting_topics (email, meeting, topic, score)
             values ($1, $2, $3, $4)
@@ -447,6 +448,22 @@ async fn store_meeting_score(
         .await
         .unwrap();
     json!({ "stored": score })
+}
+
+#[put("/meeting/<meeting_id>/vote")]
+async fn vote_for_meeting_topics(
+    user: User,
+    client: &State<sync::Arc<Client>>,
+    meeting_id: u32,
+) -> Value {
+    let m_id = meeting_id as i64;
+    let sql = "
+        update meeting_attendees
+        set voted = true
+        where meeting = $1 and email = $2
+    ";
+    client.execute(sql, &[&m_id, &user.email()]).await.unwrap();
+    json!({ "voted": meeting_id })
 }
 
 #[put(
@@ -610,7 +627,7 @@ async fn get_meeting_topics(
     id: u32,
 ) -> Json<UserTopicsMessage> {
     UserTopicsMessage {
-        topics: get_meeting_topics_vec(client, &user.email(), id as i64).await,
+        topics: get_meeting_topics_vec(client, user.email(), id as i64).await,
     }
     .into()
 }
@@ -775,7 +792,8 @@ async fn main() -> anyhow::Result<()> {
                 store_meeting_topic_score,
                 store_user_topic_score,
                 delete,
-                show_all_users
+                show_all_users,
+                vote_for_meeting_topics
             ],
         )
         .mount("/", FileServer::from(config.static_path))

@@ -1,4 +1,3 @@
-use wasm_bindgen::JsValue;
 use yew::{html, Callback, Component, Context, Html, Properties};
 
 use crate::svg::{down_arrow, up_arrow, x_icon};

@@ -9,6 +9,12 @@ pub struct CohortMessage {
     pub cohort: Option<Vec<String>>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ElectionResults {
+    pub meeting: u32,
+    pub topics: Option<Vec<UserTopic>>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct Meeting {
     pub name: String,

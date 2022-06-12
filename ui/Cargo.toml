@@ -9,7 +9,9 @@ edition = "2021"
 anyhow = "1.0.56"
 ehall = { version = "0.1.0", path = "../ehall" }
 getrandom = { version = "0.2.6", features = ["js"] }
+gloo-console = "0.2.1"
 gloo-net = { version = "0.2.0", features = ["http"] }
+gloo-timers = "0.2.4"
 gloo-utils = "0.1.3"
 js-sys = "0.3.57"
 serde = { version = "1.0.137", features = ["derive"] }

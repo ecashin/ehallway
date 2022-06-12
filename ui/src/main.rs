@@ -1,20 +1,20 @@
 use std::{borrow::Cow, boxed, collections::HashSet};
 
 use anyhow::{anyhow, Error, Result};
+use gloo_console::console_dbg;
 use gloo_net::http;
-use wasm_bindgen::prelude::JsValue;
+use gloo_timers::callback::Interval;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 use ehall::{
-    MeetingParticipantsMessage, MeetingsMessage, NewMeeting, NewTopicMessage,
+    ElectionResults, MeetingParticipantsMessage, MeetingsMessage, NewMeeting, NewTopicMessage,
     ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserIdMessage, UserTopic,
     UserTopicsMessage,
 };
 use svg::add_icon;
 
 mod cull;
-mod js;
 mod ranking;
 mod svg;
 
@@ -31,11 +31,14 @@ enum Msg {
     AddedTopic,
     AttendingMeeting(boxed::Box<u32>),
     AttendMeeting(u32),
+    CheckElection,
     DeleteMeeting(u32),
     DeleteUserTopic(u32),
+    DidFinishVoting,
     DidStoreMeetingScore,
     DidStoreMeetingTopicScore(boxed::Box<u32>),
     DidStoreUserTopicScore,
+    CommitVote,
     FetchNMeetingParticipants(u32),
     FetchMeetingTopics(u32),
     FetchUserTopics,
@@ -44,6 +47,7 @@ enum Msg {
     MeetingRegisteredChanged,
     MeetingToggleRegistered(u32),
     Noop,
+    SetElectionResults(ElectionResults),
     SetNRegisteredNJoined((u32, u32)),
     SetRegisteredMeetings(Vec<u32>),
     SetMeetings(Vec<Meeting>),
@@ -79,6 +83,7 @@ enum Tab {
 
 struct Model {
     attending_meeting: Option<u32>, // the meeting the user is currently attending
+    election_results: Option<(u32, Vec<UserTopic>)>,
     n_attending_meeting_registered: Option<u32>,
     n_attending_meeting_joined: Option<u32>,
     registered_meetings: HashSet<u32>,
@@ -89,6 +94,7 @@ struct Model {
     user_id: UserIdState,
     user_topics: Vec<UserTopic>,
     active_tab: Tab,
+    vote_poll: Option<Interval>,
 }
 
 async fn fetch_user_id() -> Option<String> {
@@ -240,6 +246,12 @@ async fn fetch_user_topics() -> Result<Vec<UserTopic>> {
     }
 }
 
+async fn commit_vote(meeting_id: boxed::Box<u32>) -> Result<()> {
+    let url = format!("/meeting/{}/vote", meeting_id);
+    gloo_net::http::Request::put(&url).send().await?;
+    Ok(())
+}
+
 async fn delete_meeting(id: boxed::Box<u32>) -> Result<()> {
     let url = format!("/meetings/{}", id);
     gloo_net::http::Request::delete(&url).send().await?;
@@ -250,6 +262,16 @@ async fn delete_user_topic(id: boxed::Box<u32>) -> Result<()> {
     let url = format!("/topics/{}", id);
     gloo_net::http::Request::delete(&url).send().await?;
     Ok(())
+}
+
+async fn fetch_election_status(meeting_id: boxed::Box<u32>) -> Result<ElectionResults> {
+    let url = format!("/meeting/{}/election_results", meeting_id);
+    let resp: std::result::Result<ElectionResults, gloo_net::Error> =
+        http::Request::get(&url).send().await?.json().await;
+    match resp {
+        Err(e) => Err(e.into()),
+        Ok(msg) => Ok(msg),
+    }
 }
 
 async fn store_meeting_score(meeting_id: boxed::Box<u32>, score: boxed::Box<u32>) -> Result<()> {
@@ -320,7 +342,7 @@ async fn register_for_meeting(id: boxed::Box<u32>, participate: bool) -> Result<
 impl Model {
     fn fetch_user(&mut self, tag: &str, ctx: &Context<Self>) {
         self.user_id = UserIdState::Fetching;
-        js::console_log(JsValue::from(format!("fetch_user in {}", tag)));
+        console_dbg!(format!("fetch_user in {}", tag));
         ctx.link().send_future(async {
             if let Some(uid) = fetch_user_id().await {
                 Msg::SetUserId(uid)
@@ -366,6 +388,15 @@ impl Model {
                                     onclick={ctx.link().callback(move |_| Msg::FetchNMeetingParticipants(meeting_id))}
                                     class="btn btn-secondary"
                                 >{"refresh"}</button>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col">
+                                <button
+                                    type="button"
+                                    class="btn btn-success"
+                                    onclick={ctx.link().callback(move |_| Msg::CommitVote)}
+                                >{"DONE RANKING!"}</button>
                             </div>
                         </div>
                     </div>
@@ -507,6 +538,7 @@ impl Component for Model {
     fn create(ctx: &Context<Self>) -> Self {
         let mut model = Self {
             attending_meeting: None,
+            election_results: None,
             registered_meetings: HashSet::new(),
             meeting_topics: None,
             meetings: vec![],
@@ -517,6 +549,7 @@ impl Component for Model {
             user_id: UserIdState::New,
             user_topics: vec![],
             active_tab: Tab::TopicManagment,
+            vote_poll: None,
         };
         model.fetch_user("create", ctx);
         model
@@ -589,6 +622,41 @@ impl Component for Model {
                 });
                 true
             }
+            Msg::CheckElection => {
+                if self.attending_meeting.is_none() {
+                    false
+                } else {
+                    let meeting_id = boxed::Box::new(self.attending_meeting.unwrap());
+                    ctx.link().send_future(async {
+                        let m_id = *meeting_id;
+                        match fetch_election_status(meeting_id).await {
+                            Ok(msg) => {
+                                if msg.meeting == m_id && msg.topics.is_some() {
+                                    Msg::SetElectionResults(msg)
+                                } else {
+                                    Msg::Noop
+                                }
+                            }
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
+                    true
+                }
+            }
+            Msg::CommitVote => {
+                if let Some(meeting_id) = self.attending_meeting {
+                    let meeting_id = boxed::Box::new(meeting_id);
+                    ctx.link().send_future(async {
+                        match commit_vote(meeting_id).await {
+                            Ok(()) => Msg::DidFinishVoting,
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
+                    true
+                } else {
+                    false
+                }
+            }
             Msg::DeleteMeeting(id) => {
                 let id = boxed::Box::new(id);
                 ctx.link().send_future(async {
@@ -607,6 +675,14 @@ impl Component for Model {
                         Err(e) => Msg::LogError(e),
                     }
                 });
+                true
+            }
+            Msg::DidFinishVoting => {
+                let handle = {
+                    let link = ctx.link().clone();
+                    Interval::new(1000, move || link.send_message(Msg::CheckElection))
+                };
+                self.vote_poll = Some(handle);
                 true
             }
             Msg::DidStoreMeetingScore => {
@@ -661,11 +737,13 @@ impl Component for Model {
             }
             Msg::LeaveMeeting => {
                 self.attending_meeting = None;
+                self.election_results = None;
+                self.vote_poll = None;
                 self.active_tab = Tab::MeetingManagement;
                 true
             }
             Msg::LogError(e) => {
-                js::console_log(JsValue::from(format!("{e}")));
+                console_dbg!(format!("{e}"));
                 true
             }
             Msg::MeetingRegisteredChanged => {
@@ -690,6 +768,19 @@ impl Component for Model {
                 true
             }
             Msg::Noop => true,
+            Msg::SetElectionResults(results) => {
+                if let Some(meeting) = self.attending_meeting {
+                    if results.meeting == meeting {
+                        self.vote_poll = None;
+                        self.election_results = Some((meeting, results.topics.unwrap()));
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
             Msg::SetMeetingTopics(topics) => {
                 self.meeting_topics = Some(topics);
                 true
@@ -720,8 +811,7 @@ impl Component for Model {
                 true
             }
             Msg::SetUserId(email) => {
-                let msg = format!("got email: {}", &email);
-                js::console_log(JsValue::from(msg));
+                console_dbg!(format!("got email: {}", &email));
                 self.user_id = UserIdState::Fetched(email);
                 ctx.link().send_future(async {
                     match fetch_meetings().await {
