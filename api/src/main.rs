@@ -85,7 +85,25 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_DB_ASSETS: [&str; 13] = [
+const CREATE_DB_ASSETS: [&str; 14] = [
+    "
+    CREATE or replace FUNCTION n_cohort_peers(uid varchar, mtg bigint) RETURNS table (n bigint) AS $$
+    << outerblock >>
+    DECLARE
+        cgrp bigint;
+    BEGIN
+        select count(id) as cohort_group into strict cgrp
+        from cohort_groups
+        where meeting = mtg;
+	if not found then
+	    return query (select 0);
+	end if;
+    RETURN query (
+        select cgrp
+    );
+    END;
+    $$ LANGUAGE plpgsql;
+    ",
     "
     CREATE or replace FUNCTION epeers(uid varchar, mtg bigint) RETURNS table (email varchar) AS $$
     << outerblock >>
@@ -235,21 +253,32 @@ async fn store_cohorts_for_group(client: &Client, cohort_group: i64, meeting_id:
     }
 }
 
-async fn cohort_for_user(client: &Client, meeting_id: i64, email: &str) -> Option<Vec<String>> {
-    let sql = "
-        select epeers($1, $2)
-    ";
+async fn n_cohort_peers(client: &Client, meeting_id: i64, email: &str) -> i64 {
+    let sql = "select n_cohort_peers($1, $2)";
     let stmt = client.prepare(sql).await.unwrap();
-    for _ in 0..N_RETRIES {
-        let rows = client.query(&stmt, &[&email, &meeting_id]).await.unwrap();
-        if !rows.is_empty() {
-            return Some(rows.iter().map(|row| row.get::<_, String>(0)).collect());
+    let rows = client.query(&stmt, &[&email, &meeting_id]).await.unwrap();
+    rows[0].get::<_, i64>(0)
+}
+
+async fn cohort_for_user(client: &Client, meeting_id: i64, email: &str) -> Option<Vec<String>> {
+    if n_cohort_peers(client, meeting_id, email).await == 0 {
+        None
+    } else {
+        let sql = "
+            select epeers($1, $2)
+        ";
+        let stmt = client.prepare(sql).await.unwrap();
+        for _ in 0..N_RETRIES {
+            let rows = client.query(&stmt, &[&email, &meeting_id]).await.unwrap();
+            if !rows.is_empty() {
+                return Some(rows.iter().map(|row| row.get::<_, String>(0)).collect());
+            }
+            // Use randomness to disperse timings (overkill, but fun)
+            let sleep_ms = RETRY_SLEEP_MS + rand::thread_rng().gen_range(0..20);
+            time::sleep(time::Duration::from_millis(sleep_ms)).await;
         }
-        // Use randomness to disperse timings (overkill, but fun)
-        let sleep_ms = RETRY_SLEEP_MS + rand::thread_rng().gen_range(0..20);
-        time::sleep(time::Duration::from_millis(sleep_ms)).await;
+        None
     }
-    None
 }
 
 async fn elected_topics(
@@ -377,7 +406,6 @@ async fn add_new_meeting(
             )
         );
     ";
-    // XXXdebug: remove unwrap when done debugging.
     client.execute(sql, &[&id, &user.email()]).await.unwrap();
     Ok(json!({ "inserted": id as u32 }))
 }
@@ -427,21 +455,20 @@ async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) 
         .await
         .unwrap();
     if rows.len() == 1 {
-        let topics = get_meeting_topics_vec(client, user.email(), identifier).await;
         let sql = "
-            insert into meeting_topics (email, meeting, topic, score)
-            values ($1, $2, $3, $4)
-            on conflict (email, meeting, topic) do nothing
+        insert into meeting_topics
+        (email, meeting, topic, score) (select email, $1 as meeting, id as topic, 0 as score from
+            (select row_number()
+                over (partition by email order by score desc)
+            as r, t.* from user_topics t
+                where t.email in
+                    (select distinct email from meeting_attendees
+                        where meeting = $1)
+            ) x
+        where x.r <= 3
+        order by random()) on conflict (email, meeting, topic) do nothing
         ";
-        let stmt = client.prepare(sql).await.unwrap();
-        for topic in topics {
-            let t_id = topic.id as i64;
-            let score = topic.score as i32;
-            client
-                .execute(&stmt, &[&user.email(), &identifier, &t_id, &score])
-                .await
-                .unwrap();
-        }
+        client.execute(sql, &[&identifier]).await.unwrap();
     }
     json!({ "attending": id })
 }
@@ -606,63 +633,28 @@ async fn get_meeting_topics_vec(
     email: &str,
     meeting: i64,
 ) -> Vec<UserTopic> {
+    if n_cohort_peers(client, meeting, email).await == 0 {
+        println!("XXXdebug: no cohort peers, so no topics");
+        return vec![];
+    }
     let sql = "
         select topic as text, m.id, m.score from user_topics u
         join
         (select topic as id, score from meeting_topics
-        where meeting = $1 and email = $2) m
+        where meeting = $1 and email in (select epeers($2, $1))) m
         on u.id = m.id;
     ";
     let stmt = client.prepare(sql).await.unwrap();
     let rows = client.query(&stmt, &[&meeting, &email]).await.unwrap();
-    let initial_topics = get_meeting_topics_initial(client, meeting).await;
-    if rows.len() >= initial_topics.len() {
-        rows.into_iter()
-            .map(|row| UserTopic {
-                text: row.get::<_, String>(0),
-                score: row.get::<_, i32>(2) as u32,
-                id: row.get::<_, i64>(1) as u32,
-            })
-            .collect()
-    } else {
-        initial_topics
-    }
+    rows.into_iter()
+        .map(|row| UserTopic {
+            text: row.get::<_, String>(0),
+            score: row.get::<_, i32>(2) as u32,
+            id: row.get::<_, i64>(1) as u32,
+        })
+        .collect()
 }
 
-async fn get_meeting_topics_initial(client: &State<sync::Arc<Client>>, id: i64) -> Vec<UserTopic> {
-    let stmt = client
-        .prepare(
-            "
-            select topic, id, 0 from
-                (select row_number()
-                    over (partition by email order by score desc)
-                as r, t.* from user_topics t
-                    where t.email in
-                        (select distinct email from meeting_attendees
-                            where meeting = $1)
-                ) x
-            where x.r <= 3
-            order by random()
-            ",
-        )
-        .await
-        .unwrap();
-    let rows = client.query(&stmt, &[&id]).await.unwrap();
-    rows.iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let text = row.get::<_, String>(0);
-            let id = row.get::<_, i64>(1);
-            let score = i as u32;
-            assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
-            UserTopic {
-                text,
-                score,
-                id: id as u32,
-            }
-        })
-        .collect::<Vec<_>>()
-}
 
 #[get("/meeting/<id>/topics")]
 async fn get_meeting_topics(
@@ -848,18 +840,16 @@ async fn main() -> anyhow::Result<()> {
         .await;
     match ignited {
         Ok(ignited) => {
-            let _app = ignited
-                .launch()
-                .await?;
+            let _app = ignited.launch().await?;
         }
         Err(e) => {
             match e.kind() {
                 rocket::error::ErrorKind::Collisions(c) => {
                     println!("collisions:{:?}", c);
                 }
-                _ => ()
+                _ => (),
             }
-            return Err(e.into())
+            return Err(e.into());
         }
     }
     Ok(())
