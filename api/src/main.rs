@@ -18,9 +18,9 @@ use tokio::time;
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    CohortMessage, Meeting, MeetingMessage, MeetingParticipantsMessage, NewMeeting,
-    NewTopicMessage, ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserTopic,
-    UserTopicsMessage,
+    CohortMessage, ElectionResults, Meeting, MeetingMessage, MeetingParticipantsMessage,
+    NewMeeting, NewTopicMessage, ParticipateMeetingMessage, RegisteredMeetingsMessage,
+    ScoreMessage, UserTopic, UserTopicsMessage,
 };
 
 mod chance;
@@ -85,34 +85,33 @@ async fn delete(auth: Auth<'_>) -> Result<Template, Error> {
     Ok(Template::render("deleted", json!({})))
 }
 
-const CREATE_DB_ASSETS: [&str; 14] = [
+const CREATE_DB_ASSETS: [&str; 13] = [
     "
-    drop function if exists epeers
-    ",
-    "
-    CREATE FUNCTION epeers(uid varchar, mtg bigint) RETURNS table (email varchar) AS $$
+    CREATE or replace FUNCTION epeers(uid varchar, mtg bigint) RETURNS table (email varchar) AS $$
     << outerblock >>
     DECLARE
         cgrp bigint;
         cht bigint;
     BEGIN
-        select cohort_group into strict cgrp
-        from testtbl1
-    where meeting = mtg;
+        select id as cohort_group into strict cgrp
+        from cohort_groups
+        where meeting = mtg;
         select cohort into strict cht
-        from testtbl2
-    where cohort_group = cgrp and testtbl2.email = uid;
+        from cohort_members
+        where cohort_group = cgrp and cohort_members.email = uid;
     RETURN query (
-        select testtbl2.email
-            from testtbl2
+        select cohort_members.email
+            from cohort_members
         where cohort_group = cgrp and cohort = cht
     );
     END;
     $$ LANGUAGE plpgsql;
     ",
     "
+    -- id is not a primary key, so that it's not an error to *try*
+    -- to create a cohort_group for a meeting that already has one.
     create table if not exists cohort_groups (
-        id bigserial primary key,
+        id bigserial,
         meeting bigint not null
     );
     ",
@@ -123,7 +122,7 @@ const CREATE_DB_ASSETS: [&str; 14] = [
     "
     create table if not exists cohort_members (
         cohort_group bigint not null,
-        cohort integer not null,
+        cohort bigint not null,
         email varchar (254) not null
     )
     ",
@@ -253,16 +252,50 @@ async fn cohort_for_user(client: &Client, meeting_id: i64, email: &str) -> Optio
     None
 }
 
-#[put("/meeting/<id>/vote")]
-async fn commit_vote(client: &State<sync::Arc<Client>>, user: User, id: u32) -> Value {
-    let id = id as i64;
-    let sql = "
-        update meeting_attendees
-        set voted = true
-        where email = $1 and meeting = $2
-    ";
-    client.execute(sql, &[&user.email(), &id]).await.unwrap();
-    json!({ "committed_vote": id })
+async fn elected_topics(
+    client: &State<sync::Arc<Client>>,
+    email: &str,
+    meeting_id: i64,
+) -> Vec<UserTopic> {
+    todo!()
+}
+
+#[get("/meeting/<id>/election_results")]
+async fn get_election_results(
+    client: &State<sync::Arc<Client>>,
+    user: User,
+    id: u32,
+) -> Json<ElectionResults> {
+    let cohort = cohort_for_user(client, id as i64, user.email()).await;
+    let topics = if let Some(mut cohort) = cohort {
+        let sql = "
+            select (email, voted) from meeting_attendees
+            where meeting = $1
+        ";
+        let id = id as i64;
+        let stmt = client.prepare(sql).await.unwrap();
+        let rows = client.query(&stmt, &[&id]).await.unwrap();
+        let mut emails: Vec<_> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
+        let voted: Vec<_> = rows.iter().map(|row| row.get::<_, bool>(1)).collect();
+        if voted.len() != cohort.len() || !voted.iter().all(|v| *v) {
+            None
+        } else {
+            cohort.sort();
+            emails.sort();
+            if cohort != emails {
+                None
+            } else {
+                Some(elected_topics(client, user.email(), id).await)
+            }
+        }
+    } else {
+        None
+    };
+    ElectionResults {
+        meeting: id,
+        topics,
+    }
+    .into()
 }
 
 #[put("/meeting/<id>/start")]
@@ -273,14 +306,12 @@ async fn start_meeting(
 ) -> Json<CohortMessage> {
     let id = id as i64;
     let sql = "
-        begin transaction serializable;
         insert into cohort_groups
-            (meeting)
-            values
-            ($1)
+        (meeting)
+        values
+        ($1)
         on conflict (meeting) do nothing
-        returning id;
-        commit
+        returning id
     ";
     let stmt = client.prepare(sql).await.unwrap();
     let rows = client.query(&stmt, &[&id]).await.unwrap();
@@ -774,19 +805,17 @@ async fn main() -> anyhow::Result<()> {
     {
         let client = client.clone();
         for sql in CREATE_DB_ASSETS {
-            print!("{sql}");
             client.execute(sql, &[]).await?;
         }
     }
-    let _app = rocket::build()
+    let ignited = rocket::build()
         .mount(
             "/",
             routes![
-                index,
                 add_new_meeting,
                 add_new_topic,
                 attend_meeting,
-                commit_vote,
+                delete,
                 delete_meeting,
                 delete_topic,
                 get_meeting_participants,
@@ -796,16 +825,17 @@ async fn main() -> anyhow::Result<()> {
                 get_user_topics,
                 get_user_id,
                 get_login,
-                meeting_register,
-                post_signup,
+                get_election_results,
                 get_signup,
+                index,
                 logout,
+                meeting_register,
                 post_login,
+                post_signup,
                 start_meeting,
                 store_meeting_score,
                 store_meeting_topic_score,
                 store_user_topic_score,
-                delete,
                 show_all_users,
                 vote_for_meeting_topics
             ],
@@ -815,9 +845,22 @@ async fn main() -> anyhow::Result<()> {
         .manage(users)
         .attach(Template::fairing())
         .ignite()
-        .await?
-        .launch()
-        .await?;
-
+        .await;
+    match ignited {
+        Ok(ignited) => {
+            let _app = ignited
+                .launch()
+                .await?;
+        }
+        Err(e) => {
+            match e.kind() {
+                rocket::error::ErrorKind::Collisions(c) => {
+                    println!("collisions:{:?}", c);
+                }
+                _ => ()
+            }
+            return Err(e.into())
+        }
+    }
     Ok(())
 }

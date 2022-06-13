@@ -53,10 +53,11 @@ enum Msg {
     SetMeetingTopics(Vec<UserTopic>),
     SetTab(Tab),
     SetUserId(String),
-    SetUserTopics(Vec<UserTopic>),      // set in Model
-    StoreMeetingScore((u32, u32)),      // (id, score) - store to database
+    SetUserTopics(Vec<UserTopic>), // set in Model
+    StartMeeting,
+    StoreMeetingScore((u32, u32)), // (id, score) - store to database
     StoreMeetingTopicScore((u32, u32)), // (id, score)
-    StoreUserTopicScore((u32, u32)),    // (id, score)
+    StoreUserTopicScore((u32, u32)), // (id, score)
     UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
 }
@@ -273,6 +274,12 @@ async fn fetch_election_status(meeting_id: boxed::Box<u32>) -> Result<ElectionRe
     }
 }
 
+async fn start_meeting(meeting_id: boxed::Box<u32>) -> Result<()> {
+    let url = format!("/meeting/{}/start", meeting_id);
+    gloo_net::http::Request::put(&url).send().await?;
+    Ok(())
+}
+
 async fn store_meeting_score(meeting_id: boxed::Box<u32>, score: boxed::Box<u32>) -> Result<()> {
     let url = format!("/meeting/{}/score", meeting_id);
     gloo_net::http::Request::put(&url)
@@ -390,6 +397,13 @@ impl Model {
                             </div>
                         </div>
                         <div class="row">
+                            <div class="col">
+                                <button
+                                    type="button"
+                                    class="btn btn-success"
+                                    onclick={ctx.link().callback(move |_| Msg::StartMeeting)}
+                                >{"Start Meeting Now"}</button>
+                            </div>
                             <div class="col">
                                 <button
                                     type="button"
@@ -822,6 +836,18 @@ impl Component for Model {
             }
             Msg::SetUserTopics(topics) => {
                 self.user_topics = topics;
+                true
+            }
+            Msg::StartMeeting => {
+                if let Some(meeting_id) = self.attending_meeting {
+                    let meeting_id = boxed::Box::new(meeting_id);
+                    ctx.link().send_future(async {
+                        match start_meeting(meeting_id).await {
+                            Ok(()) => Msg::Noop,
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
+                }
                 true
             }
             Msg::StoreMeetingScore((meeting_id, score)) => {
