@@ -461,7 +461,8 @@ async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) 
         insert into meeting_topics
         (email, meeting, topic, score)
         (
-            select email, $1 as meeting, id as topic, (row_number() over (order by random()) - 1) as score from
+            select $2 as email, $1 as meeting, id as topic, (row_number() over (order by random()) - 1) as score
+            from
                 (select row_number()
                     over (partition by email order by score desc)
                 as r, t.* from user_topics t
@@ -473,7 +474,7 @@ async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) 
             order by random()
         ) on conflict (email, meeting, topic) do nothing
         ";
-        client.execute(sql, &[&identifier]).await.unwrap();
+        client.execute(sql, &[&identifier, &user.email()]).await.unwrap();
     } else {
         println!("inserted no meeting attendees with {} rows", rows.len());
     }
