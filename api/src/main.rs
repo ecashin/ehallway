@@ -262,6 +262,7 @@ async fn n_cohort_peers(client: &Client, meeting_id: i64, email: &str) -> i64 {
 
 async fn cohort_for_user(client: &Client, meeting_id: i64, email: &str) -> Option<Vec<String>> {
     if n_cohort_peers(client, meeting_id, email).await == 0 {
+        println!("{} has no cohort peers", email);
         None
     } else {
         let sql = "
@@ -455,20 +456,26 @@ async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) 
         .await
         .unwrap();
     if rows.len() == 1 {
+        println!("inserted meeting attendees");
         let sql = "
         insert into meeting_topics
-        (email, meeting, topic, score) (select email, $1 as meeting, id as topic, 0 as score from
-            (select row_number()
-                over (partition by email order by score desc)
-            as r, t.* from user_topics t
-                where t.email in
-                    (select distinct email from meeting_attendees
-                        where meeting = $1)
-            ) x
-        where x.r <= 3
-        order by random()) on conflict (email, meeting, topic) do nothing
+        (email, meeting, topic, score)
+        (
+            select email, $1 as meeting, id as topic, (row_number() over (order by random()) - 1) as score from
+                (select row_number()
+                    over (partition by email order by score desc)
+                as r, t.* from user_topics t
+                    where t.email in
+                        (select distinct email from meeting_attendees
+                            where meeting = $1)
+                ) x
+            where x.r <= 3
+            order by random()
+        ) on conflict (email, meeting, topic) do nothing
         ";
         client.execute(sql, &[&identifier]).await.unwrap();
+    } else {
+        println!("inserted no meeting attendees with {} rows", rows.len());
     }
     json!({ "attending": id })
 }
