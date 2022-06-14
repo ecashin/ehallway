@@ -733,7 +733,10 @@ impl Component for Model {
                 let id = boxed::Box::new(meeting_id);
                 ctx.link().send_future(async {
                     match fetch_meeting_topics(id).await {
-                        Ok(topics) => Msg::SetMeetingTopics(topics),
+                        Ok(topics) => {
+                            console_dbg!(&topics);
+                            Msg::SetMeetingTopics(topics)
+                        }
                         Err(e) => Msg::LogError(e),
                     }
                 });
@@ -842,8 +845,9 @@ impl Component for Model {
                 if let Some(meeting_id) = self.attending_meeting {
                     let meeting_id = boxed::Box::new(meeting_id);
                     ctx.link().send_future(async {
+                        let m_id = *meeting_id;
                         match start_meeting(meeting_id).await {
-                            Ok(()) => Msg::Noop,
+                            Ok(()) => Msg::FetchMeetingTopics(m_id),
                             Err(e) => Msg::LogError(e),
                         }
                     });
