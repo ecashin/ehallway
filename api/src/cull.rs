@@ -3,6 +3,7 @@ use anyhow::{anyhow, Result};
 
 use ehall::argsort;
 
+#[derive(Debug)]
 pub struct Ranking {
     // Entries are ordered to correspond to an array of choices.
     // Values are scores, with higher scores preferred.

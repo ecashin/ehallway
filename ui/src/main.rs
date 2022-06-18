@@ -17,6 +17,8 @@ use svg::add_icon;
 mod ranking;
 mod svg;
 
+const CHECK_ELECTION_MS: u32 = 2_000;
+
 struct Meeting {
     id: u32,
     name: String,
@@ -693,7 +695,9 @@ impl Component for Model {
             Msg::DidFinishVoting => {
                 let handle = {
                     let link = ctx.link().clone();
-                    Interval::new(1000, move || link.send_message(Msg::CheckElection))
+                    Interval::new(CHECK_ELECTION_MS, move || {
+                        link.send_message(Msg::CheckElection)
+                    })
                 };
                 self.vote_poll = Some(handle);
                 true

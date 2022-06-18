@@ -1,4 +1,6 @@
-use std::fs;
+use std::collections::HashMap;
+use std::{convert::TryInto, path::PathBuf, result::Result};
+use std::{fs, sync};
 
 use anyhow::Context;
 use clap::Parser;
@@ -12,8 +14,6 @@ use rocket::{delete, form::*, get, post, put, response::Redirect, routes, State}
 use rocket_auth::{prelude::Error, *};
 use rocket_dyn_templates::Template;
 use serde_json::json;
-use std::*;
-use std::{convert::TryInto, path::PathBuf, result::Result};
 use tokio::time;
 use tokio_postgres::{connect, Client, NoTls};
 
@@ -287,7 +287,71 @@ async fn elected_topics(
     email: &str,
     meeting_id: i64,
 ) -> Vec<UserTopic> {
-    todo!()
+    let sql = "
+        select email, topic, score, text from
+        ((select email, topic, score from meeting_topics
+        where meeting = $1 and email in (select epeers($2, $1))) as m
+        join
+        (select topic as text, id from user_topics) u
+        on m.topic = u.id)
+        order by email, topic;
+        ";
+    let stmt = client.prepare(sql).await.unwrap();
+    let rows = client.query(&stmt, &[&meeting_id, &email]).await.unwrap();
+    let mut scores: HashMap<_, Vec<_>> = HashMap::new();
+    for row in rows.into_iter() {
+        let email: String = row.get::<_, String>(0);
+        let topic: i64 = row.get::<_, i64>(1);
+        let score: i32 = row.get::<_, i32>(2);
+        let text: String = row.get::<_, String>(3);
+        scores
+            .entry(email)
+            .or_insert_with(Vec::new)
+            .push((topic, score, text));
+    }
+    dbg!(&scores);
+    let mut rankings: Vec<_> = vec![];
+    let mut topics: Vec<_> = vec![];
+    let mut topic_texts: Vec<String> = vec![];
+    for (_email, user_scores) in scores.iter_mut() {
+        let user_topics: Vec<_> = user_scores.iter().map(|(topic, _, _)| *topic).collect();
+        if topics.is_empty() {
+            topics.extend(user_topics);
+            topic_texts.extend(
+                user_scores
+                    .iter()
+                    .map(|(_, _, text)| text.clone())
+                    .collect::<Vec<String>>(),
+            );
+        } else {
+            // SQL did order by email, topic, so we expect these to be in the same
+            // order for every `_email`.
+            assert_eq!(user_topics, topics);
+        }
+        rankings.push(cull::Ranking {
+            scores: user_scores
+                .iter()
+                .map(|(_topic, score, _text)| *score as usize)
+                .collect(),
+        });
+    }
+    dbg!(&rankings);
+    let result = cull::borda_count(&rankings).unwrap();
+    dbg!(&result);
+    dbg!(&topics);
+    dbg!(&topic_texts);
+    let mut topics: Vec<_> = result
+        .into_iter()
+        .enumerate()
+        .map(|(i, bscore)| UserTopic {
+            text: topic_texts[i].clone(),
+            id: topics[i] as u32,
+            score: bscore as u32,
+        })
+        .collect();
+    dbg!(&topics);
+    topics.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+    topics[..2].to_vec()
 }
 
 #[get("/meeting/<id>/election_results")]
@@ -299,13 +363,19 @@ async fn get_election_results(
     let cohort = cohort_for_user(client, id as i64, user.email()).await;
     let topics = if let Some(mut cohort) = cohort {
         let sql = "
-            select (email, voted) from meeting_attendees
-            where meeting = $1
+            select email, voted from meeting_attendees
+            where meeting = $1 and email in (select epeers($2, $1))
         ";
         let id = id as i64;
         let stmt = client.prepare(sql).await.unwrap();
-        let rows = client.query(&stmt, &[&id]).await.unwrap();
-        let mut emails: Vec<_> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
+        let rows = client.query(&stmt, &[&id, &user.email()]).await.unwrap();
+        let mut emails: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                dbg!(&row);
+                row.get::<_, String>(0)
+            })
+            .collect();
         let voted: Vec<_> = rows.iter().map(|row| row.get::<_, bool>(1)).collect();
         if voted.len() != cohort.len() || !voted.iter().all(|v| *v) {
             None
@@ -474,7 +544,10 @@ async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) 
             order by random()
         ) on conflict (email, meeting, topic) do nothing
         ";
-        client.execute(sql, &[&identifier, &user.email()]).await.unwrap();
+        client
+            .execute(sql, &[&identifier, &user.email()])
+            .await
+            .unwrap();
     } else {
         println!("inserted no meeting attendees with {} rows", rows.len());
     }
@@ -663,7 +736,6 @@ async fn get_meeting_topics_vec(
         .collect()
 }
 
-
 #[get("/meeting/<id>/topics")]
 async fn get_meeting_topics(
     user: User,
@@ -851,11 +923,8 @@ async fn main() -> anyhow::Result<()> {
             let _app = ignited.launch().await?;
         }
         Err(e) => {
-            match e.kind() {
-                rocket::error::ErrorKind::Collisions(c) => {
-                    println!("collisions:{:?}", c);
-                }
-                _ => (),
+            if let rocket::error::ErrorKind::Collisions(c) = e.kind() {
+                println!("collisions:{:?}", c);
             }
             return Err(e.into());
         }
