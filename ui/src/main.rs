@@ -85,7 +85,7 @@ enum Tab {
 
 struct Model {
     attending_meeting: Option<u32>, // the meeting the user is currently attending
-    election_results: Option<(u32, Vec<UserTopic>)>,
+    election_results: Option<ElectionResults>,
     n_attending_meeting_registered: Option<u32>,
     n_attending_meeting_joined: Option<u32>,
     registered_meetings: HashSet<u32>,
@@ -374,6 +374,38 @@ impl Model {
         });
     }
 
+    fn meeting_election_results_html(&self, _ctx: &Context<Self>) -> Html {
+        let ElectionResults {
+            meeting_name,
+            topics,
+            ..
+        } = self.election_results.as_ref().unwrap();
+        let topics_html: Vec<_> = if topics.is_none() {
+            vec![]
+        } else {
+            topics
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|t| {
+                    html! {
+                        <div class="row">
+                            {t.text.clone()}
+                        </div>
+                    }
+                })
+                .collect()
+        };
+        html! {
+            <>
+                <h2>{ meeting_name }</h2>
+                <div class="container">
+                    {topics_html}
+                </div>
+            </>
+        }
+    }
+
     fn meeting_attendance_html(&self, ctx: &Context<Self>) -> Html {
         if let Some(meeting_id) = self.attending_meeting {
             let meeting_name = &self
@@ -646,7 +678,7 @@ impl Component for Model {
                         let m_id = *meeting_id;
                         match fetch_election_status(meeting_id).await {
                             Ok(msg) => {
-                                if msg.meeting == m_id && msg.topics.is_some() {
+                                if msg.meeting_id == m_id && msg.topics.is_some() {
                                     Msg::SetElectionResults(msg)
                                 } else {
                                     Msg::Noop
@@ -790,9 +822,9 @@ impl Component for Model {
             Msg::Noop => true,
             Msg::SetElectionResults(results) => {
                 if let Some(meeting) = self.attending_meeting {
-                    if results.meeting == meeting {
+                    if results.meeting_id == meeting {
                         self.vote_poll = None;
-                        self.election_results = Some((meeting, results.topics.unwrap()));
+                        self.election_results = Some(results);
                         true
                     } else {
                         false
@@ -953,8 +985,12 @@ impl Component for Model {
                         Tab::MeetingManagement => {
                             self.meeting_management_html(ctx)
                         }
-                        Tab::MeetingPrep => html!{
-                            self.meeting_attendance_html(ctx)
+                        Tab::MeetingPrep => {
+                            if self.election_results.is_none() {
+                                self.meeting_attendance_html(ctx)
+                            } else {
+                                self.meeting_election_results_html(ctx)
+                            }
                         }
                     }
                 }

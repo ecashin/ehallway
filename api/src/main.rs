@@ -392,10 +392,21 @@ async fn get_election_results(
         None
     };
     ElectionResults {
-        meeting: id,
+        meeting_id: id,
+        meeting_name: meeting_name(client, id).await,
         topics,
     }
     .into()
+}
+
+async fn meeting_name(client: &State<sync::Arc<Client>>, meeting_id: u32) -> String {
+    let id = meeting_id as i64;
+    let sql = "
+        select name from meetings where id = $1
+    ";
+    let stmt = client.prepare(sql).await.unwrap();
+    let rows = client.query(&stmt, &[&id]).await.unwrap();
+    rows.get(0).unwrap().get::<_, String>(0)
 }
 
 #[put("/meeting/<id>/start")]
