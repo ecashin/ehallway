@@ -681,7 +681,8 @@ impl Component for Model {
                                 if msg.meeting_id == m_id && msg.topics.is_some() {
                                     Msg::SetElectionResults(msg)
                                 } else {
-                                    Msg::Noop
+                                    let e = anyhow!("election status response: {:?}", &msg);
+                                    Msg::LogError(e)
                                 }
                             }
                             Err(e) => Msg::LogError(e),
@@ -769,10 +770,7 @@ impl Component for Model {
                 let id = boxed::Box::new(meeting_id);
                 ctx.link().send_future(async {
                     match fetch_meeting_topics(id).await {
-                        Ok(topics) => {
-                            console_dbg!(&topics);
-                            Msg::SetMeetingTopics(topics)
-                        }
+                        Ok(topics) => Msg::SetMeetingTopics(topics),
                         Err(e) => Msg::LogError(e),
                     }
                 });

@@ -369,19 +369,16 @@ async fn get_election_results(
         let id = id as i64;
         let stmt = client.prepare(sql).await.unwrap();
         let rows = client.query(&stmt, &[&id, &user.email()]).await.unwrap();
-        let mut emails: Vec<_> = rows
-            .iter()
-            .map(|row| {
-                dbg!(&row);
-                row.get::<_, String>(0)
-            })
-            .collect();
+        let mut emails: Vec<_> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
         let voted: Vec<_> = rows.iter().map(|row| row.get::<_, bool>(1)).collect();
+        dbg!(&cohort);
+        dbg!(&voted);
         if voted.len() != cohort.len() || !voted.iter().all(|v| *v) {
             None
         } else {
             cohort.sort();
             emails.sort();
+            dbg!(&emails);
             if cohort != emails {
                 None
             } else {
@@ -389,6 +386,7 @@ async fn get_election_results(
             }
         }
     } else {
+        dbg!("empty cohort for user");
         None
     };
     ElectionResults {
