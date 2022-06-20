@@ -9,6 +9,14 @@ pub struct CohortMessage {
     pub cohort: Option<Vec<String>>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ElectionResults {
+    pub meeting_id: u32,
+    pub meeting_name: String,
+    pub topics: Option<Vec<UserTopic>>,
+    pub users: Option<Vec<String>>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct Meeting {
     pub name: String,
@@ -71,4 +79,13 @@ pub struct UserTopic {
 #[derive(Serialize, Deserialize)]
 pub struct UserTopicsMessage {
     pub topics: Vec<UserTopic>,
+}
+
+pub fn argsort<T>(a: &[T]) -> Vec<usize>
+where
+    T: PartialOrd,
+{
+    let mut indexed: Vec<_> = a.iter().enumerate().collect();
+    indexed.sort_by(|(_i1, v1), (_i2, v2)| v1.partial_cmp(v2).unwrap());
+    indexed.into_iter().map(|(i, _v)| i).collect()
 }

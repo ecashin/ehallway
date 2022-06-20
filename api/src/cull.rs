@@ -1,8 +1,9 @@
 // It would be nice to use tallystick, but I don't want to use nightly.
 use anyhow::{anyhow, Result};
 
-use crate::ranking::argsort;
+use ehall::argsort;
 
+#[derive(Clone, Debug)]
 pub struct Ranking {
     // Entries are ordered to correspond to an array of choices.
     // Values are scores, with higher scores preferred.
@@ -14,21 +15,24 @@ pub fn borda_count(rankings: &[Ranking]) -> Result<Vec<usize>> {
     if rankings.is_empty() {
         return Ok(vec![]);
     }
-    let off0 = &rankings[..rankings.len() - 1];
-    let off1 = &rankings[1..];
-    let sum_diffs = off0
-        .iter()
-        .zip(off1.iter())
-        .map(|(a, b)| (a.scores.len() as isize - b.scores.len() as isize).pow(2))
-        .sum::<isize>();
-    if sum_diffs != 0 {
-        return Err(anyhow!("lengths of rankings differ"));
+    let len = rankings[0].scores.len();
+    for r in rankings.iter().skip(1) {
+        if r.scores.len() != len {
+            return Err(anyhow!("lengths of rankings differ"));
+        }
     }
+
+    // The most esteemed choice has the highest score and the lowest implicit rank.
+    // Using argsort provides the conversion
+    // from arbitrary scores to Borda-count points.
     let rankings: Vec<_> = rankings.iter().map(|r| argsort(&r.scores)).collect();
-    let mut scores: Vec<_> = vec![];
-    for i in 0..rankings[0].len() {
-        scores.push((0..rankings.len()).map(|j| rankings[j][i]).sum());
+    let mut scores: Vec<_> = vec![0; len];
+    for r in &rankings {
+        for j in 0..len {
+            scores[j] += r[j];
+        }
     }
+    scores = argsort(&scores); // canonicalize results
     Ok(scores)
 }
 
@@ -62,7 +66,32 @@ mod tests {
             },
         ];
         let count = borda_count(&rankings).unwrap();
-        assert_eq!(count, [0, 3, 6]);
+        assert_eq!(count, [0, 1, 2]);
+    }
+
+    #[test]
+    fn test_borda_one_ranking() {
+        let rankings = [
+            Ranking {
+                scores: vec![9, 5, 11, 0, 4, 6, 8, 1, 7, 2, 3, 10],
+            },
+            Ranking {
+                scores: vec![0, 1, 2],
+            },
+            Ranking {
+                scores: vec![3, 5, 4],
+            },
+            Ranking {
+                scores: vec![8, 7, 6],
+            },
+        ];
+        for r in rankings.into_iter() {
+            let rr = &[r.clone()];
+            let count = borda_count(rr).unwrap();
+            let i_expected = argsort(&r.scores);
+            let i_observed = argsort(&count);
+            assert_eq!(i_expected, i_observed);
+        }
     }
 
     #[test]
@@ -79,6 +108,6 @@ mod tests {
             },
         ];
         let count = borda_count(&rankings).unwrap();
-        assert_eq!(count, [2, 3, 4]);
+        assert_eq!(count, [0, 1, 2]);
     }
 }
