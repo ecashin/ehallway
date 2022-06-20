@@ -96,9 +96,9 @@ const CREATE_DB_ASSETS: [&str; 14] = [
         select count(id) as cohort_group into strict cgrp
         from cohort_groups
         where meeting = mtg;
-	if not found then
-	    return query (select 0);
-	end if;
+        if not found then
+            return query (select 0);
+        end if;
     RETURN query (
         select cgrp
     );
