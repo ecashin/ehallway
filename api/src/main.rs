@@ -313,7 +313,6 @@ async fn elected_topics(
             .or_insert_with(Vec::new)
             .push((topic, score, text));
     }
-    dbg!(&scores);
     let mut rankings: Vec<_> = vec![];
     let mut topics: Vec<_> = vec![];
     let mut topic_texts: Vec<String> = vec![];
@@ -339,11 +338,7 @@ async fn elected_topics(
                 .collect(),
         });
     }
-    dbg!(&rankings);
     let result = cull::borda_count(&rankings).unwrap();
-    dbg!(&result);
-    dbg!(&topics);
-    dbg!(&topic_texts);
     let mut topics: Vec<_> = result
         .into_iter()
         .enumerate()
@@ -353,7 +348,6 @@ async fn elected_topics(
             score: bscore as u32,
         })
         .collect();
-    dbg!(&topics);
     topics.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
     topics[..N_MEETING_TOPIC_WINNERS].to_vec()
 }
@@ -375,14 +369,11 @@ async fn get_election_results(
         let rows = client.query(&stmt, &[&id, &user.email()]).await.unwrap();
         let mut emails: Vec<_> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
         let voted: Vec<_> = rows.iter().map(|row| row.get::<_, bool>(1)).collect();
-        dbg!(&cohort);
-        dbg!(&voted);
         if voted.len() != cohort.len() || !voted.iter().all(|v| *v) {
             (None, None)
         } else {
             cohort.sort();
             emails.sort();
-            dbg!(&emails);
             if cohort != emails {
                 (None, None)
             } else {
