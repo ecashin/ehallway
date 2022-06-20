@@ -15,20 +15,20 @@ pub fn borda_count(rankings: &[Ranking]) -> Result<Vec<usize>> {
     if rankings.is_empty() {
         return Ok(vec![]);
     }
-    let off0 = &rankings[..rankings.len() - 1];
-    let off1 = &rankings[1..];
-    let sum_diffs = off0
-        .iter()
-        .zip(off1.iter())
-        .map(|(a, b)| (a.scores.len() as isize - b.scores.len() as isize).pow(2))
-        .sum::<isize>();
-    if sum_diffs != 0 {
-        return Err(anyhow!("lengths of rankings differ"));
+    let len = rankings[0].scores.len();
+    for r in rankings.iter().skip(1) {
+        if r.scores.len() != len {
+            return Err(anyhow!("lengths of rankings differ"));
+        }
     }
+
+    // The most esteemed choice has the highest score and the lowest implicit rank.
+    // Using argsort provides the conversion
+    // from arbitrary scores to Borda-count points.
     let rankings: Vec<_> = rankings.iter().map(|r| argsort(&r.scores)).collect();
     let mut scores: Vec<_> = vec![];
-    for i in 0..rankings[0].len() {
-        scores.push((0..rankings.len()).map(|j| rankings[j][i]).sum());
+    for j in 0..rankings[0].len() {
+        scores.push((0..rankings.len()).map(|i| rankings[i][j]).sum());
     }
     Ok(scores)
 }
