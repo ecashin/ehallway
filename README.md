@@ -7,9 +7,10 @@ of working web technologies.
 
 ## Technologies
 
-This software has a web server (back end)
-and a web user interface (front end),
-both implemented in [Rust](https://www.rust-lang.org/).
+This software has a web server (back end),
+a web user interface (front end),
+and a library shared between the two,
+all implemented in [Rust](https://www.rust-lang.org/).
 
 The front end has a [React](https://reactjs.org/)-like implementation
 written in Rust by using [yew v0.19](https://yew.rs/)
@@ -21,6 +22,10 @@ using the [Rocket](https://rocket.rs/) framework
 with [rocket_auth](https://docs.rs/rocket_auth/latest/rocket_auth/)
 and [tokio_postgres](https://docs.rs/tokio-postgres/latest/tokio_postgres/)
 working together to handle user-authenticated sessions.
+
+The library ensures that data structures
+shared between the front end and back end
+are defined once.
 
 ## Concepts
 
@@ -59,6 +64,10 @@ The parts below are in place.
 * User authentication (email and password only) and authenticated sessions
 * User-specific topic-list management
 * Site-wide meeting management
+* Meeting registration and joining
+* Meeting topic ranking per user
+* Vote casting
+* Election results tallying and presentation
 
 ## System Setup
 
@@ -69,6 +78,7 @@ The system has a few main components.
     * [Caddy Reverse Proxy](https://caddyserver.com/)
 * eHallway Originals
     * API Server
+    * Library
     * UI
 
 ### Configuring Postgres
@@ -140,3 +150,7 @@ to visit [this link](https://localhost/).
 ## Contributing
 
 Documentation uses [semantic linefeeds](https://rhodesmill.org/brandon/2012/one-sentence-per-line/).
+
+Code should be committed after `cargo fmt` has formatted it.
+
+Code should be `cargo clippy` clean before pull requests are opened.
