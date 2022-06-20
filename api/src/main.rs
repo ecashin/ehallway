@@ -361,7 +361,7 @@ async fn get_election_results(
     id: u32,
 ) -> Json<ElectionResults> {
     let cohort = cohort_for_user(client, id as i64, user.email()).await;
-    let topics = if let Some(mut cohort) = cohort {
+    let (topics, cohort) = if let Some(mut cohort) = cohort {
         let sql = "
             select email, voted from meeting_attendees
             where meeting = $1 and email in (select epeers($2, $1))
@@ -374,25 +374,29 @@ async fn get_election_results(
         dbg!(&cohort);
         dbg!(&voted);
         if voted.len() != cohort.len() || !voted.iter().all(|v| *v) {
-            None
+            (None, None)
         } else {
             cohort.sort();
             emails.sort();
             dbg!(&emails);
             if cohort != emails {
-                None
+                (None, None)
             } else {
-                Some(elected_topics(client, user.email(), id).await)
+                (
+                    Some(elected_topics(client, user.email(), id).await),
+                    Some(cohort),
+                )
             }
         }
     } else {
         dbg!("empty cohort for user");
-        None
+        (None, None)
     };
     ElectionResults {
         meeting_id: id,
         meeting_name: meeting_name(client, id).await,
         topics,
+        users: cohort,
     }
     .into()
 }

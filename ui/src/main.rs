@@ -378,6 +378,7 @@ impl Model {
         let ElectionResults {
             meeting_name,
             topics,
+            users,
             ..
         } = self.election_results.as_ref().unwrap();
         let topics_html: Vec<_> = if topics.is_none() {
@@ -396,9 +397,28 @@ impl Model {
                 })
                 .collect()
         };
+        let users_html: Vec<_> = if let Some(users) = users {
+            users
+                .iter()
+                .map(|u| {
+                    html! {
+                        <div class="row">
+                            {u.clone()}
+                        </div>
+                    }
+                })
+                .collect()
+        } else {
+            vec![]
+        };
         html! {
             <>
                 <h2>{ meeting_name }</h2>
+                <h3>{"Your Group"}</h3>
+                <div class="container">
+                    {users_html}
+                </div>
+                <h3>{"Your Topics"}</h3>
                 <div class="container">
                     {topics_html}
                 </div>
