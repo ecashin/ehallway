@@ -26,6 +26,7 @@ use ehall::{
 mod chance;
 mod cull;
 
+const N_MEETING_TOPIC_WINNERS: usize = 2;
 const N_RETRIES: usize = 10;
 const RETRY_SLEEP_MS: u64 = 100;
 
@@ -351,7 +352,7 @@ async fn elected_topics(
         .collect();
     dbg!(&topics);
     topics.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    topics[..2].to_vec()
+    topics[..N_MEETING_TOPIC_WINNERS].to_vec()
 }
 
 #[get("/meeting/<id>/election_results")]
