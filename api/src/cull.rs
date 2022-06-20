@@ -26,10 +26,13 @@ pub fn borda_count(rankings: &[Ranking]) -> Result<Vec<usize>> {
     // Using argsort provides the conversion
     // from arbitrary scores to Borda-count points.
     let rankings: Vec<_> = rankings.iter().map(|r| argsort(&r.scores)).collect();
-    let mut scores: Vec<_> = vec![];
-    for j in 0..rankings[0].len() {
-        scores.push((0..rankings.len()).map(|i| rankings[i][j]).sum());
+    let mut scores: Vec<_> = vec![0; len];
+    for r in &rankings {
+        for j in 0..len {
+            scores[j] += r[j];
+        }
     }
+    scores = argsort(&scores); // canonicalize results
     Ok(scores)
 }
 
@@ -63,7 +66,7 @@ mod tests {
             },
         ];
         let count = borda_count(&rankings).unwrap();
-        assert_eq!(count, [0, 3, 6]);
+        assert_eq!(count, [0, 1, 2]);
     }
 
     #[test]
@@ -105,6 +108,6 @@ mod tests {
             },
         ];
         let count = borda_count(&rankings).unwrap();
-        assert_eq!(count, [2, 3, 4]);
+        assert_eq!(count, [0, 1, 2]);
     }
 }
