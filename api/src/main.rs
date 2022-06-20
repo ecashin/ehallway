@@ -350,7 +350,7 @@ async fn elected_topics(
         })
         .collect();
     dbg!(&topics);
-    topics.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+    topics.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
     topics[..2].to_vec()
 }
 
