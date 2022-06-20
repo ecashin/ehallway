@@ -17,7 +17,7 @@ use svg::add_icon;
 mod ranking;
 mod svg;
 
-const CHECK_ELECTION_MS: u32 = 2_000;
+const CHECK_ELECTION_MS: u32 = 1_000;
 
 struct Meeting {
     id: u32,
