@@ -70,6 +70,9 @@ mod tests {
     fn test_borda_one_ranking() {
         let rankings = [
             Ranking {
+                scores: vec![9, 5, 11, 0, 4, 6, 8, 1, 7, 2, 3, 10],
+            },
+            Ranking {
                 scores: vec![0, 1, 2],
             },
             Ranking {
