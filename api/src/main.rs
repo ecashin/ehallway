@@ -729,9 +729,12 @@ async fn get_meeting_topics_vec(
     }
     let sql = "
         select topic as text, m.id, m.score from user_topics u
-        join
+        right join
         (select topic as id, score from meeting_topics
-        where meeting = $1 and email in (select epeers($2, $1))) m
+        where meeting = $1 and meeting_topics.topic in (
+            select id from user_topics
+            where email in (select epeers($2, $1))
+        )) m
         on u.id = m.id;
     ";
     let stmt = client.prepare(sql).await.unwrap();
