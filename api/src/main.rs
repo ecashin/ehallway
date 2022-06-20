@@ -289,14 +289,17 @@ async fn elected_topics(
     meeting_id: i64,
 ) -> Vec<UserTopic> {
     let sql = "
-        select email, topic, score, text from
-        ((select email, topic, score from meeting_topics
-        where meeting = $1 and email in (select epeers($2, $1))) as m
+    select m.email, topic, score, text from
+    (
+        (select email, topic, score from meeting_topics
+            where meeting = $1 and email in (select epeers($2, $1))) as m
         join
-        (select topic as text, id from user_topics) u
-        on m.topic = u.id)
-        order by email, topic;
-        ";
+        (select topic as text, email, id from user_topics
+            where email in (select epeers('Aa345678@foo.com', 16))) u
+        on m.topic = u.id
+    )
+    order by email, topic
+    ";
     let stmt = client.prepare(sql).await.unwrap();
     let rows = client.query(&stmt, &[&meeting_id, &email]).await.unwrap();
     let mut scores: HashMap<_, Vec<_>> = HashMap::new();
