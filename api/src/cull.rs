@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 
 use ehall::argsort;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Ranking {
     // Entries are ordered to correspond to an array of choices.
     // Values are scores, with higher scores preferred.
@@ -64,6 +64,28 @@ mod tests {
         ];
         let count = borda_count(&rankings).unwrap();
         assert_eq!(count, [0, 3, 6]);
+    }
+
+    #[test]
+    fn test_borda_one_ranking() {
+        let rankings = [
+            Ranking {
+                scores: vec![0, 1, 2],
+            },
+            Ranking {
+                scores: vec![3, 5, 4],
+            },
+            Ranking {
+                scores: vec![8, 7, 6],
+            },
+        ];
+        for r in rankings.into_iter() {
+            let rr = &[r.clone()];
+            let count = borda_count(rr).unwrap();
+            let i_expected = argsort(&r.scores);
+            let i_observed = argsort(&count);
+            assert_eq!(i_expected, i_observed);
+        }
     }
 
     #[test]
