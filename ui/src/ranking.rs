@@ -119,17 +119,17 @@ impl Component for Ranking {
             let attend_meeting_html = if attend_meeting.is_some() {
                 let is_reg = is_registered.as_ref().unwrap()[i];
                 html! {
-                    <div class="col">
+                    <td>
                         <button
                             onclick={ctx.link().callback(move |_| Msg::AttendMeeting(id))}
                             disabled={!is_reg}
                             type={"button"}
                             class={"btn btn-secondary"}
                         >{"join now"}</button>
-                    </div>
+                    </td>
                 }
             } else {
-                html! {}
+                html! { <td></td> }
             };
             let register_toggle_html = if register_toggle.is_some() {
                 let is_reg = is_registered.as_ref().unwrap()[i];
@@ -140,7 +140,7 @@ impl Component for Ranking {
                     "btn btn-secondary"
                 };
                 html! {
-                    <div class="col">
+                    <td>
                         <input
                             id={register_id.clone()}
                             class="btn-check"
@@ -153,23 +153,23 @@ impl Component for Ranking {
                             class={register_class}
                             for={register_id}>{"register"}
                         </label>
-                    </div>
+                    </td>
                 }
             } else {
-                html! {}
+                html! { <td></td> }
             };
             let delete_html = if delete.is_some() {
                 html! {
-                    <div class="col">
+                    <td>
                         <button
                         onclick={ctx.link().callback(move |_| Msg::Delete(id))}
                         type={"button"}
                         class={"btn"}
                         >{ x_icon() }</button>
-                    </div>
+                    </td>
                 }
             } else {
-                html! {}
+                html! { <td></td> }
             };
             let up_button = if list_item_offset == 0 {
                 html! {}
@@ -194,24 +194,28 @@ impl Component for Ranking {
                 }
             };
             items.push(html! {
-                <div class={"row"}>
+                <tr>
                     {attend_meeting_html}
                     {register_toggle_html}
-                    <div class="col">
+                    <td>
                         {labels[i].clone()}
-                    </div>
-                    <div class="col">
+                    </td>
+                    <td>
                         {up_button}
+                    </td>
+                    <td>
                         {down_button}
-                    </div>
+                    </td>
                     {delete_html}
-                </div>
+                </tr>
             });
         }
         html! {
-            <div class="container">
-                {items}
-            </div>
+            <table class="table table-striped">
+                <tbody>
+                    {items}
+                </tbody>
+            </table>
         }
     }
 }
