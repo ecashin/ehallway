@@ -114,7 +114,7 @@ impl Component for Ranking {
         let order = argsort(scores);
         let mut items: Vec<_> = vec![];
 
-        for i in order.into_iter().rev() {
+        for (list_item_offset, i) in order.into_iter().rev().enumerate() {
             let id = ids[i];
             let attend_meeting_html = if attend_meeting.is_some() {
                 let is_reg = is_registered.as_ref().unwrap()[i];
@@ -171,6 +171,28 @@ impl Component for Ranking {
             } else {
                 html! {}
             };
+            let up_button = if list_item_offset == 0 {
+                html! {}
+            } else {
+                html! {
+                    <button
+                    onclick={ctx.link().callback(move |_| Msg::Up(id))}
+                    type={"button"}
+                    class={"btn"}
+                    >{ up_arrow() }</button>
+                }
+            };
+            let down_button = if list_item_offset == scores.len() - 1 {
+                html! {}
+            } else {
+                html! {
+                    <button
+                    onclick={ctx.link().callback(move |_| Msg::Down(id))}
+                    type={"button"}
+                    class={"btn"}
+                    >{ down_arrow() }</button>
+                }
+            };
             items.push(html! {
                 <div class={"row"}>
                     {attend_meeting_html}
@@ -179,16 +201,8 @@ impl Component for Ranking {
                         {labels[i].clone()}
                     </div>
                     <div class="col">
-                        <button
-                        onclick={ctx.link().callback(move |_| Msg::Up(id))}
-                        type={"button"}
-                        class={"btn"}
-                        >{ up_arrow() }</button>
-                        <button
-                        onclick={ctx.link().callback(move |_| Msg::Down(id))}
-                        type={"button"}
-                        class={"btn"}
-                        >{ down_arrow() }</button>
+                        {up_button}
+                        {down_button}
                     </div>
                     {delete_html}
                 </div>
