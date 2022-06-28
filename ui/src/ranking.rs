@@ -133,25 +133,23 @@ impl Component for Ranking {
             let register_toggle_html = if register_toggle.is_some() {
                 let is_reg = is_registered.as_ref().unwrap()[i];
                 let register_id = format!("register{id}");
-                let register_class = if is_reg {
-                    "btn btn-primary"
-                } else {
-                    "btn btn-secondary"
-                };
                 html! {
                     <td>
-                        <input
-                            id={register_id.clone()}
-                            class="btn-check"
-                            type={"checkbox"}
-                            checked={ is_reg }
-                            autocomplete={"off"}
-                            onclick={ctx.link().callback(move |_| Msg::RegisterToggle(id))}
-                        />
-                        <label
-                            class={register_class}
-                            for={register_id}>{"register"}
-                        </label>
+                        <div class="form-check">
+                            <input
+                                id={register_id.clone()}
+                                class="form-check-input"
+                                type={"checkbox"}
+                                value=""
+                                checked={ is_reg }
+                                autocomplete={"off"}
+                                onclick={ctx.link().callback(move |_| Msg::RegisterToggle(id))}
+                            />
+                            <label
+                                class="form-check-label"
+                                for={register_id}>{"register"}
+                            </label>
+                        </div>
                     </td>
                 }
             } else {
