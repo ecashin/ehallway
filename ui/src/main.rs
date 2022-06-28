@@ -566,11 +566,11 @@ impl Model {
     }
 
     fn tabs_html(&self, ctx: &Context<Self>) -> Html {
-        let item_class = |tag| {
+        let link_class = |tag| {
             if self.active_tab == tag {
-                "nav-item"
+                "nav-link active"
             } else {
-                "nav-item active"
+                "nav-link"
             }
         };
         // aria-current value
@@ -584,14 +584,20 @@ impl Model {
         // https://getbootstrap.com/docs/5.0/components/navs-tabs/
         html! {
             <ul class="nav nav-tabs">
-                <li class={ item_class(Tab::TopicManagment) } aria-current={ac(Tab::TopicManagment)}>
-                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::TopicManagment))}>{ "Topics" }</a>
+                <li class="nav-item">
+                    <a class={ link_class(Tab::TopicManagment) }
+                    aria-current={ac(Tab::TopicManagment)}
+                    href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::TopicManagment))}>{ "Topics" }</a>
                 </li>
-                <li class={ item_class(Tab::MeetingManagement) } aria-current={ac(Tab::MeetingManagement)}>
-                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingManagement))}>{ "Meetings" }</a>
+                <li class="nav-item">
+                    <a class={ link_class(Tab::MeetingManagement) }
+                    aria-current={ac(Tab::MeetingManagement)}
+                    href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingManagement))}>{ "Meetings" }</a>
                 </li>
-                <li class={ item_class(Tab::MeetingPrep) } aria-current={ac(Tab::MeetingPrep)}>
-                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingPrep))}>{ "Meet" }</a>
+                <li class="nav-item">
+                    <a class={ link_class(Tab::MeetingPrep) }
+                    aria-current={ac(Tab::MeetingPrep)}
+                    href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingPrep))}>{ "Meet" }</a>
                 </li>
             </ul>
         }
