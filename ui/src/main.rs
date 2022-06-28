@@ -99,6 +99,19 @@ struct Model {
     vote_poll: Option<Interval>,
 }
 
+// These are populated by the back-end in template rendering.
+const LOGIN_JS_OBJECT: &str = "elc_global";
+const LOGIN_JS_ATTRIBUTE: &str = "user_email";
+
+fn no_user() -> bool {
+    let elc_global = gloo_utils::window().get(LOGIN_JS_OBJECT);
+    if let Some(info) = elc_global {
+        !info.has_own_property(&wasm_bindgen::JsValue::from(LOGIN_JS_ATTRIBUTE))
+    } else {
+        true
+    }
+}
+
 async fn fetch_user_id() -> Option<String> {
     let resp = http::Request::get("/user_id")
         .send()
@@ -962,6 +975,9 @@ impl Component for Model {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
+        if no_user() {
+            return html! {};
+        }
         let onkeypress = ctx
             .link()
             .batch_callback(move |e: KeyboardEvent| (e.key() == "Enter").then(|| Msg::AddTopic));
