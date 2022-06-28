@@ -116,21 +116,20 @@ impl Component for Ranking {
 
         for (list_item_offset, i) in order.into_iter().rev().enumerate() {
             let id = ids[i];
-            let attend_meeting_html = if attend_meeting.is_some() {
-                let is_reg = is_registered.as_ref().unwrap()[i];
-                html! {
-                    <td>
-                        <button
-                            onclick={ctx.link().callback(move |_| Msg::AttendMeeting(id))}
-                            disabled={!is_reg}
-                            type={"button"}
-                            class={"btn btn-secondary"}
-                        >{"join now"}</button>
-                    </td>
-                }
-            } else {
-                html! { <td></td> }
-            };
+            let attend_meeting_html =
+                if attend_meeting.is_some() && is_registered.as_ref().unwrap()[i] {
+                    html! {
+                        <td>
+                            <button
+                                onclick={ctx.link().callback(move |_| Msg::AttendMeeting(id))}
+                                type={"button"}
+                                class={"btn btn-secondary"}
+                            >{"join now"}</button>
+                        </td>
+                    }
+                } else {
+                    html! { <td></td> }
+                };
             let register_toggle_html = if register_toggle.is_some() {
                 let is_reg = is_registered.as_ref().unwrap()[i];
                 let register_id = format!("register{id}");
