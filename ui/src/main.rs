@@ -571,6 +571,7 @@ impl Model {
         html! {
             <div>
                 {new_meeting}
+                <hr/>
                 <div class="container">
                     {meetings_html}
                 </div>
@@ -983,18 +984,26 @@ impl Component for Model {
             .batch_callback(move |e: KeyboardEvent| (e.key() == "Enter").then(|| Msg::AddTopic));
         let new_topic = if let UserIdState::Fetched(_uid) = &self.user_id {
             html! {
-                <div>
-                    <input
-                        id="new-topic" type="text" value={self.new_topic_text.clone()}
-                        { onkeypress }
-                        oninput={ctx.link().callback(|e: InputEvent| {
-                                let input = e.target_unchecked_into::<HtmlInputElement>();
-                                Msg::UpdateNewTopicText(input.value())
-                        })}
-                    />
-                    <button
-                        type={"button"} class={"btn"}
-                        onclick={ctx.link().callback(|_| Msg::AddTopic)}>{ add_icon() }</button>
+                <div class="container">
+                    <div class="row">
+                        <div class="col text-end">{ "Add new topic:" }</div>
+                        <div class="col">
+                            <input
+                                id="new-topic" type="text" value={self.new_topic_text.clone()}
+                                { onkeypress }
+                                oninput={ctx.link().callback(|e: InputEvent| {
+                                        let input = e.target_unchecked_into::<HtmlInputElement>();
+                                        Msg::UpdateNewTopicText(input.value())
+                                })}
+                            />
+                        </div>
+                        <div class="col text-start">
+                            <button
+                                type={"button"} class={"btn"}
+                                onclick={ctx.link().callback(|_| Msg::AddTopic)}>{ add_icon() }</button>
+                        </div>
+                    </div>
+                    <hr/>
                 </div>
             }
         } else {
