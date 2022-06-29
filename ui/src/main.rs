@@ -33,6 +33,7 @@ enum Msg {
     AttendingMeeting(boxed::Box<u32>),
     AttendMeeting(u32),
     CheckElection,
+    CheckMeetings,
     DeleteMeeting(u32),
     DeleteUserTopic(u32),
     DidFinishVoting,
@@ -96,6 +97,7 @@ struct Model {
     user_id: UserIdState,
     user_topics: Vec<UserTopic>,
     active_tab: Tab,
+    meeting_poll: Option<Interval>,
     vote_poll: Option<Interval>,
 }
 
@@ -636,6 +638,7 @@ impl Component for Model {
             user_id: UserIdState::New,
             user_topics: vec![],
             active_tab: Tab::TopicManagment,
+            meeting_poll: None,
             vote_poll: None,
         };
         model.fetch_user("create", ctx);
@@ -730,6 +733,19 @@ impl Component for Model {
                     });
                     true
                 }
+            }
+            Msg::CheckMeetings => {
+                if self.active_tab == Tab::MeetingManagement {
+                    ctx.link().send_future(async {
+                        match fetch_meetings().await {
+                            Ok(meetings) => Msg::SetMeetings(meetings),
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
+                } else {
+                    self.meeting_poll = None;
+                }
+                true
             }
             Msg::CommitVote => {
                 if let Some(meeting_id) = self.attending_meeting {
@@ -897,6 +913,15 @@ impl Component for Model {
                             .send_message(Msg::FetchNMeetingParticipants(meeting_id));
                         ctx.link().send_message(Msg::FetchMeetingTopics(meeting_id));
                     }
+                }
+                if tab == Tab::MeetingManagement && tab != prev_tab {
+                    let handle = {
+                        let link = ctx.link().clone();
+                        Interval::new(CHECK_ELECTION_MS, move || {
+                            link.send_message(Msg::CheckMeetings)
+                        })
+                    };
+                    self.meeting_poll = Some(handle);
                 }
                 true
             }
