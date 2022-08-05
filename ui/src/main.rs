@@ -94,8 +94,6 @@ impl Tab {
 struct Model {
     attending_meeting: Option<u32>, // the meeting the user is currently attending
     election_results: Option<ElectionResults>,
-    n_attending_meeting_registered: Option<u32>,
-    n_attending_meeting_joined: Option<u32>,
     registered_meetings: HashSet<u32>,
     meeting_topics: Option<Vec<UserTopic>>,
     meetings: Vec<ScoredMeeting>,
@@ -359,6 +357,23 @@ async fn register_for_meeting(id: boxed::Box<u32>, participate: bool) -> Result<
 }
 
 impl Model {
+    fn meeting_people(&self) -> Option<(usize, usize)> {
+        if let Some(attending_meeting) = self.attending_meeting {
+            self.meetings
+                .iter()
+                .filter(|sm| sm.meeting.id == attending_meeting)
+                .map(|sm| {
+                    (
+                        sm.meeting.n_registered as usize,
+                        sm.meeting.n_joined as usize,
+                    )
+                })
+                .next()
+        } else {
+            None
+        }
+    }
+
     fn fetch_user(&mut self, tag: &str, ctx: &Context<Self>) {
         self.user_id = UserIdState::Fetching;
         console_dbg!(format!("fetch_user in {}", tag));
@@ -452,8 +467,7 @@ impl Model {
                 .unwrap()
                 .meeting
                 .name;
-            let join_info_html = if let Some(n_registered) = self.n_attending_meeting_registered {
-                let n_joined = self.n_attending_meeting_joined.unwrap();
+            let join_info_html = if let Some((n_registered, n_joined)) = self.meeting_people() {
                 html! {
                     <div class="container">
                         <div class="row">
@@ -627,8 +641,6 @@ impl Component for Model {
             registered_meetings: HashSet::new(),
             meeting_topics: None,
             meetings: vec![],
-            n_attending_meeting_joined: None,
-            n_attending_meeting_registered: None,
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
             user_id: UserIdState::New,

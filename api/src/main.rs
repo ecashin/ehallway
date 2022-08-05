@@ -780,8 +780,8 @@ async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
             let name = row.get::<_, String>(0);
             let id = row.get::<_, i64>(1);
             let score = row.get::<_, i32>(2);
-            let n_registered = row.get::<_, i32>(3);
-            let n_attending = row.get::<_, i32>(4);
+            let n_registered = row.get::<_, i64>(3);
+            let n_attending = row.get::<_, i64>(4);
             assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
             MeetingMessage {
                 meeting: Meeting {
