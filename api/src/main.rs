@@ -691,13 +691,11 @@ const GET_SCORED_MEETINGS: &str = "
     left join (
         select meeting, count(email) as n_registered
         from meeting_participants
-        where email = $1
         group by meeting
     ) r on meetings.id = r.meeting
     left join (
         select meeting, count(email) as n_attending
-        from meeting_participants
-        where email = $1
+        from meeting_attendees
         group by meeting
     ) a on meetings.id = a.meeting;
 ";
