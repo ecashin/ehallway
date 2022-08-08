@@ -57,6 +57,7 @@ enum Msg {
     UpdateNewTopicText(String),
 }
 
+#[derive(Clone)]
 struct ScoredMeeting {
     meeting: Meeting,
     score: u32,
@@ -557,21 +558,21 @@ impl Model {
         } else {
             html! {}
         };
-        let mut meetings: Vec<_> = self
-            .meetings
-            .iter()
-            .map(|ScoredMeeting { meeting, score }| (meeting.id, meeting.name.clone(), *score))
-            .collect();
-        meetings.sort_by(|(_a_id, _a_name, a_score), (_b_id, _b_name, b_score)| {
-            b_score.partial_cmp(a_score).unwrap()
-        });
+        let mut meetings = self.meetings.clone();
+        meetings.sort_by(
+            |ScoredMeeting { score: a_score, .. }, ScoredMeeting { score: b_score, .. }| {
+                a_score.partial_cmp(b_score).unwrap()
+            },
+        );
         let meetings_html = {
-            let ids = meetings.iter().map(|m| m.0).collect::<Vec<u32>>();
+            let ids = meetings.iter().map(|i| i.meeting.id).collect::<Vec<u32>>();
             html! {
                 <ranking::Ranking
                     ids={ids.clone()}
-                    labels={meetings.iter().map(|m| m.1.clone()).collect::<Vec<String>>()}
-                    scores={meetings.iter().map(|m| m.2).collect::<Vec<u32>>()}
+                    labels={meetings.iter().map(|i| i.meeting.name.clone()).collect::<Vec<String>>()}
+                    scores={meetings.iter().map(|i| i.score).collect::<Vec<u32>>()}
+                    registered_counts={Some(meetings.iter().map(|i| i.meeting.n_registered).collect::<Vec<u32>>())}
+                    joined_counts={Some(meetings.iter().map(|i| i.meeting.n_joined).collect::<Vec<u32>>())}
                     store_score={ctx.link().callback(Msg::StoreMeetingScore)}
                     delete={Some(ctx.link().callback(Msg::DeleteMeeting))}
                     is_registered={Some(ids.iter().map(|id| self.registered_meetings.get(id).is_some()).collect::<Vec<bool>>())}

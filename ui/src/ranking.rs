@@ -9,6 +9,8 @@ pub struct Props {
     pub ids: Vec<u32>,
     pub labels: Vec<String>,
     pub scores: Vec<u32>,
+    pub registered_counts: Option<Vec<u32>>,
+    pub joined_counts: Option<Vec<u32>>,
     pub store_score: Callback<(u32, u32)>,
     pub delete: Option<Callback<u32>>,
     pub is_registered: Option<Vec<bool>>,
@@ -106,6 +108,8 @@ impl Component for Ranking {
             ids,
             labels,
             scores,
+            registered_counts,
+            joined_counts,
             is_registered,
             attend_meeting,
             register_toggle,
@@ -190,6 +194,18 @@ impl Component for Ranking {
                     >{ down_arrow() }</button>
                 }
             };
+            let participants_html = if registered_counts.is_some() && joined_counts.is_some() {
+                let r = registered_counts.as_ref().unwrap()[i];
+                let j = joined_counts.as_ref().unwrap()[i];
+                html! {
+                    <>
+                        <td>{format!("registered:{r}")}</td>
+                        <td>{format!("joined:{j}")}</td>
+                    </>
+                }
+            } else {
+                html! {}
+            };
             items.push(html! {
                 <tr>
                     {attend_meeting_html}
@@ -203,6 +219,7 @@ impl Component for Ranking {
                     <td>
                         {down_button}
                     </td>
+                    {participants_html}
                     {delete_html}
                 </tr>
             });
