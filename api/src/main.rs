@@ -18,9 +18,9 @@ use tokio::time;
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    CohortMessage, ElectionResults, Meeting, MeetingMessage,
-    NewMeeting, NewTopicMessage, ParticipateMeetingMessage, RegisteredMeetingsMessage,
-    ScoreMessage, UserTopic, UserTopicsMessage,
+    CohortMessage, ElectionResults, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
+    ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserTopic,
+    UserTopicsMessage,
 };
 
 mod chance;
@@ -513,6 +513,28 @@ async fn add_new_topic(
     Ok(json!({ "inserted": id as u32 }))
 }
 
+#[delete("/meeting/<id>/attendees")]
+async fn leave_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
+    let identifier = id as i64;
+    let sql = "
+        delete from meeting_attendees
+        where meeting = $1 and email = $2
+    ";
+    client
+        .execute(sql, &[&identifier, &user.email()])
+        .await
+        .unwrap();
+    let sql = "
+        delete from meeting_topics
+        where meeting = $1 and email = $2
+    ";
+    client
+        .execute(sql, &[&identifier, &user.email()])
+        .await
+        .unwrap();
+    json!({ "left": id })
+}
+
 #[post("/meeting/<id>/attendees")]
 async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
     let identifier = id as i64;
@@ -769,9 +791,9 @@ async fn get_registered_meetings(
 }
 
 #[get("/meetings")]
-async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
+async fn get_meetings(_user: User, client: &State<sync::Arc<Client>>) -> Value {
     let stmt = client.prepare(GET_SCORED_MEETINGS).await.unwrap();
-    let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
+    let rows = client.query(&stmt, &[]).await.unwrap();
     let meetings: Vec<_> = rows
         .iter()
         .map(|row| {
@@ -897,6 +919,7 @@ async fn main() -> anyhow::Result<()> {
                 get_election_results,
                 get_signup,
                 index,
+                leave_meeting,
                 logout,
                 meeting_register,
                 post_login,

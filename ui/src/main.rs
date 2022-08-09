@@ -38,6 +38,7 @@ enum Msg {
     FetchMeetingTopics(u32),
     FetchUserTopics,
     LeaveMeeting,
+    LeftMeeting(boxed::Box<u32>),
     LogError(Error),
     MeetingRegisteredChanged,
     MeetingToggleRegistered(u32),
@@ -326,6 +327,11 @@ async fn store_user_topic_score(topic_id: boxed::Box<u32>, score: boxed::Box<u32
 async fn attend_meeting(meeting_id: boxed::Box<u32>) -> Result<http::Response> {
     let url = format!("/meeting/{}/attendees", *meeting_id);
     Ok(gloo_net::http::Request::post(&url).send().await?)
+}
+
+async fn leave_meeting(meeting_id: boxed::Box<u32>) -> Result<http::Response> {
+    let url = format!("/meeting/{}/attendees", *meeting_id);
+    Ok(gloo_net::http::Request::delete(&url).send().await?)
 }
 
 async fn add_new_meeting(name: String) -> Result<http::Response> {
@@ -839,10 +845,24 @@ impl Component for Model {
                 true
             }
             Msg::LeaveMeeting => {
-                self.attending_meeting = None;
-                self.election_results = None;
-                self.vote_poll = None;
-                self.active_tab = Tab::MeetingManagement;
+                if let Some(meeting_to_leave) = self.attending_meeting {
+                    let meeting = Box::new(meeting_to_leave);
+                    ctx.link().send_future(async {
+                        match leave_meeting(meeting.clone()).await {
+                            Ok(_) => Msg::LeftMeeting(meeting),
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
+                }
+                true
+            }
+            Msg::LeftMeeting(meeting) => {
+                if self.attending_meeting.is_some() && self.attending_meeting.unwrap() == *meeting {
+                    self.attending_meeting = None;
+                    self.election_results = None;
+                    self.vote_poll = None;
+                    self.active_tab = Tab::MeetingManagement;
+                }
                 true
             }
             Msg::LogError(e) => {
