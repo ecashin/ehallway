@@ -2,6 +2,8 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
+pub const COHORT_QUORUM: usize = 3;
+
 /// A None cohort means try again.
 #[derive(Serialize, Deserialize)]
 pub struct CohortMessage {

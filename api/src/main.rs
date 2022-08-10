@@ -18,7 +18,7 @@ use tokio::time;
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    CohortMessage, ElectionResults, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
+    COHORT_QUORUM, CohortMessage, ElectionResults, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
     ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserTopic,
     UserTopicsMessage,
 };
@@ -226,7 +226,7 @@ async fn store_cohorts_for_group(client: &Client, cohort_group: i64, meeting_id:
         .iter()
         .map(|row| row.get::<_, String>(0))
         .collect();
-    let cohorts = chance::cohorts(emails.len(), 3).unwrap();
+    let cohorts = chance::cohorts(emails.len(), COHORT_QUORUM).unwrap();
     let cohort_rows: Vec<_> = cohorts
         .into_iter()
         .enumerate()
