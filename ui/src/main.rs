@@ -8,7 +8,7 @@ use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 use ehall::{
-    ElectionResults, MeetingParticipantsMessage, MeetingsMessage, NewMeeting, NewTopicMessage,
+    ElectionResults, Meeting, MeetingsMessage, NewMeeting, NewTopicMessage,
     ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserIdMessage, UserTopic,
     UserTopicsMessage,
 };
@@ -19,12 +19,6 @@ mod svg;
 
 const CHECK_ELECTION_MS: u32 = 1_000;
 
-struct Meeting {
-    id: u32,
-    name: String,
-    score: u32,
-}
-
 enum Msg {
     AddMeeting,
     AddTopic,
@@ -33,6 +27,7 @@ enum Msg {
     AttendingMeeting(boxed::Box<u32>),
     AttendMeeting(u32),
     CheckElection,
+    CheckMeetings,
     DeleteMeeting(u32),
     DeleteUserTopic(u32),
     DidFinishVoting,
@@ -40,18 +35,17 @@ enum Msg {
     DidStoreMeetingTopicScore(boxed::Box<u32>),
     DidStoreUserTopicScore,
     CommitVote,
-    FetchNMeetingParticipants(u32),
     FetchMeetingTopics(u32),
     FetchUserTopics,
     LeaveMeeting,
+    LeftMeeting(boxed::Box<u32>),
     LogError(Error),
     MeetingRegisteredChanged,
     MeetingToggleRegistered(u32),
     Noop,
     SetElectionResults(ElectionResults),
-    SetNRegisteredNJoined((u32, u32)),
     SetRegisteredMeetings(Vec<u32>),
-    SetMeetings(Vec<Meeting>),
+    SetMeetings(Vec<ScoredMeeting>),
     SetMeetingTopics(Vec<UserTopic>),
     SetTab(Tab),
     SetUserId(String),
@@ -62,6 +56,12 @@ enum Msg {
     StoreUserTopicScore((u32, u32)), // (id, score)
     UpdateNewMeetingText(String),
     UpdateNewTopicText(String),
+}
+
+#[derive(Clone)]
+struct ScoredMeeting {
+    meeting: Meeting,
+    score: u32,
 }
 
 enum UserIdState {
@@ -83,20 +83,42 @@ enum Tab {
     TopicManagment,
 }
 
+impl Tab {
+    fn needs_meeting_poll(&self) -> bool {
+        match self {
+            Tab::MeetingManagement => true,
+            Tab::MeetingPrep => true,
+            Tab::TopicManagment => false,
+        }
+    }
+}
+
 struct Model {
     attending_meeting: Option<u32>, // the meeting the user is currently attending
     election_results: Option<ElectionResults>,
-    n_attending_meeting_registered: Option<u32>,
-    n_attending_meeting_joined: Option<u32>,
     registered_meetings: HashSet<u32>,
     meeting_topics: Option<Vec<UserTopic>>,
-    meetings: Vec<Meeting>,
+    meetings: Vec<ScoredMeeting>,
     new_meeting_text: String,
     new_topic_text: String,
     user_id: UserIdState,
     user_topics: Vec<UserTopic>,
     active_tab: Tab,
+    meeting_poll: Option<Interval>,
     vote_poll: Option<Interval>,
+}
+
+// These are populated by the back-end in template rendering.
+const LOGIN_JS_OBJECT: &str = "elc_global";
+const LOGIN_JS_ATTRIBUTE: &str = "user_email";
+
+fn no_user() -> bool {
+    let elc_global = gloo_utils::window().get(LOGIN_JS_OBJECT);
+    if let Some(info) = elc_global {
+        !info.has_own_property(&wasm_bindgen::JsValue::from(LOGIN_JS_ATTRIBUTE))
+    } else {
+        true
+    }
 }
 
 async fn fetch_user_id() -> Option<String> {
@@ -121,51 +143,40 @@ fn error_from_response(resp: http::Response) -> Error {
     anyhow!("response status {status}: {}", resp.status_text())
 }
 
-async fn fetch_meetings() -> Result<Vec<Meeting>> {
+async fn fetch_meetings() -> Result<Vec<ScoredMeeting>> {
     let resp: std::result::Result<MeetingsMessage, gloo_net::Error> =
         http::Request::get("/meetings").send().await?.json().await;
     match resp {
         Ok(msg) => {
             let mut mtgs: Vec<_> = msg
                 .meetings
-                .iter()
-                .map(|mm| Meeting {
-                    id: mm.meeting.id,
-                    name: mm.meeting.name.clone(),
+                .into_iter()
+                .map(|mm| ScoredMeeting {
+                    meeting: mm.meeting,
                     score: mm.score,
                 })
                 .collect();
-            mtgs.sort_by(|Meeting { score: a, .. }, Meeting { score: b, .. }| {
-                a.partial_cmp(b).unwrap()
-            });
+            mtgs.sort_by(
+                |ScoredMeeting { score: a, .. }, ScoredMeeting { score: b, .. }| {
+                    a.partial_cmp(b).unwrap()
+                },
+            );
             let mut canonically_scored_meetings: Vec<_> = vec![];
-            for (canonical_score, Meeting { id, name, score }) in mtgs.iter().enumerate() {
+            for (canonical_score, ScoredMeeting { meeting, score }) in mtgs.into_iter().enumerate()
+            {
                 let cscore = canonical_score as u32;
-                if *score != cscore {
-                    store_meeting_score(boxed::Box::new(*id), boxed::Box::new(cscore))
+                if score != cscore {
+                    store_meeting_score(boxed::Box::new(meeting.id), boxed::Box::new(cscore))
                         .await
                         .unwrap();
                 }
-                canonically_scored_meetings.push(Meeting {
-                    id: *id,
-                    name: name.clone(),
+                canonically_scored_meetings.push(ScoredMeeting {
+                    meeting,
                     score: cscore,
                 });
             }
             Ok(canonically_scored_meetings)
         }
-        Err(e) => Err(e.into()),
-    }
-}
-
-async fn fetch_n_meeting_participants(
-    meeting_id: boxed::Box<u32>,
-) -> Result<MeetingParticipantsMessage> {
-    let url = format!("/meeting/{meeting_id}/participant_counts");
-    let resp: std::result::Result<MeetingParticipantsMessage, gloo_net::Error> =
-        http::Request::get(&url).send().await?.json().await;
-    match resp {
-        Ok(msg) => Ok(msg),
         Err(e) => Err(e.into()),
     }
 }
@@ -318,6 +329,11 @@ async fn attend_meeting(meeting_id: boxed::Box<u32>) -> Result<http::Response> {
     Ok(gloo_net::http::Request::post(&url).send().await?)
 }
 
+async fn leave_meeting(meeting_id: boxed::Box<u32>) -> Result<http::Response> {
+    let url = format!("/meeting/{}/attendees", *meeting_id);
+    Ok(gloo_net::http::Request::delete(&url).send().await?)
+}
+
 async fn add_new_meeting(name: String) -> Result<http::Response> {
     let new_meeting = NewMeeting {
         name: Cow::from(name),
@@ -348,6 +364,23 @@ async fn register_for_meeting(id: boxed::Box<u32>, participate: bool) -> Result<
 }
 
 impl Model {
+    fn meeting_people(&self) -> Option<(usize, usize)> {
+        if let Some(attending_meeting) = self.attending_meeting {
+            self.meetings
+                .iter()
+                .filter(|sm| sm.meeting.id == attending_meeting)
+                .map(|sm| {
+                    (
+                        sm.meeting.n_registered as usize,
+                        sm.meeting.n_joined as usize,
+                    )
+                })
+                .next()
+        } else {
+            None
+        }
+    }
+
     fn fetch_user(&mut self, tag: &str, ctx: &Context<Self>) {
         self.user_id = UserIdState::Fetching;
         console_dbg!(format!("fetch_user in {}", tag));
@@ -431,23 +464,22 @@ impl Model {
             let meeting_name = &self
                 .meetings
                 .iter()
-                .find_map(|m| if m.id == meeting_id { Some(m) } else { None })
+                .find_map(|m| {
+                    if m.meeting.id == meeting_id {
+                        Some(m)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap()
+                .meeting
                 .name;
-            let join_info_html = if let Some(n_registered) = self.n_attending_meeting_registered {
-                let n_joined = self.n_attending_meeting_joined.unwrap();
+            let join_info_html = if let Some((n_registered, n_joined)) = self.meeting_people() {
                 html! {
                     <div class="container">
                         <div class="row">
                             <div class="col">
                                 <h3>{format!("{n_joined} of {n_registered} registered participants have joined")}</h3>
-                            </div>
-                            <div class="col">
-                                <button
-                                    type="button"
-                                    onclick={ctx.link().callback(move |_| Msg::FetchNMeetingParticipants(meeting_id))}
-                                    class="btn btn-secondary"
-                                >{"refresh"}</button>
                             </div>
                         </div>
                         <div class="row">
@@ -532,21 +564,21 @@ impl Model {
         } else {
             html! {}
         };
-        let mut meetings: Vec<_> = self
-            .meetings
-            .iter()
-            .map(|Meeting { id, name, score }| (*id, name.clone(), *score))
-            .collect();
-        meetings.sort_by(|(_a_id, _a_name, a_score), (_b_id, _b_name, b_score)| {
-            b_score.partial_cmp(a_score).unwrap()
-        });
+        let mut meetings = self.meetings.clone();
+        meetings.sort_by(
+            |ScoredMeeting { score: a_score, .. }, ScoredMeeting { score: b_score, .. }| {
+                a_score.partial_cmp(b_score).unwrap()
+            },
+        );
         let meetings_html = {
-            let ids = meetings.iter().map(|m| m.0).collect::<Vec<u32>>();
+            let ids = meetings.iter().map(|i| i.meeting.id).collect::<Vec<u32>>();
             html! {
                 <ranking::Ranking
                     ids={ids.clone()}
-                    labels={meetings.iter().map(|m| m.1.clone()).collect::<Vec<String>>()}
-                    scores={meetings.iter().map(|m| m.2).collect::<Vec<u32>>()}
+                    labels={meetings.iter().map(|i| i.meeting.name.clone()).collect::<Vec<String>>()}
+                    scores={meetings.iter().map(|i| i.score).collect::<Vec<u32>>()}
+                    registered_counts={Some(meetings.iter().map(|i| i.meeting.n_registered).collect::<Vec<u32>>())}
+                    joined_counts={Some(meetings.iter().map(|i| i.meeting.n_joined).collect::<Vec<u32>>())}
                     store_score={ctx.link().callback(Msg::StoreMeetingScore)}
                     delete={Some(ctx.link().callback(Msg::DeleteMeeting))}
                     is_registered={Some(ids.iter().map(|id| self.registered_meetings.get(id).is_some()).collect::<Vec<bool>>())}
@@ -558,6 +590,7 @@ impl Model {
         html! {
             <div>
                 {new_meeting}
+                <hr/>
                 <div class="container">
                     {meetings_html}
                 </div>
@@ -566,11 +599,11 @@ impl Model {
     }
 
     fn tabs_html(&self, ctx: &Context<Self>) -> Html {
-        let item_class = |tag| {
+        let link_class = |tag| {
             if self.active_tab == tag {
-                "nav-item"
+                "nav-link active"
             } else {
-                "nav-item active"
+                "nav-link"
             }
         };
         // aria-current value
@@ -584,14 +617,20 @@ impl Model {
         // https://getbootstrap.com/docs/5.0/components/navs-tabs/
         html! {
             <ul class="nav nav-tabs">
-                <li class={ item_class(Tab::TopicManagment) } aria-current={ac(Tab::TopicManagment)}>
-                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::TopicManagment))}>{ "Topics" }</a>
+                <li class="nav-item">
+                    <a class={ link_class(Tab::TopicManagment) }
+                    aria-current={ac(Tab::TopicManagment)}
+                    href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::TopicManagment))}>{ "Topics" }</a>
                 </li>
-                <li class={ item_class(Tab::MeetingManagement) } aria-current={ac(Tab::MeetingManagement)}>
-                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingManagement))}>{ "Meetings" }</a>
+                <li class="nav-item">
+                    <a class={ link_class(Tab::MeetingManagement) }
+                    aria-current={ac(Tab::MeetingManagement)}
+                    href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingManagement))}>{ "Meetings" }</a>
                 </li>
-                <li class={ item_class(Tab::MeetingPrep) } aria-current={ac(Tab::MeetingPrep)}>
-                    <a class="nav-link" href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingPrep))}>{ "Meet" }</a>
+                <li class="nav-item">
+                    <a class={ link_class(Tab::MeetingPrep) }
+                    aria-current={ac(Tab::MeetingPrep)}
+                    href="#" onclick={ctx.link().callback(|_| Msg::SetTab(Tab::MeetingPrep))}>{ "Meet" }</a>
                 </li>
             </ul>
         }
@@ -609,13 +648,12 @@ impl Component for Model {
             registered_meetings: HashSet::new(),
             meeting_topics: None,
             meetings: vec![],
-            n_attending_meeting_joined: None,
-            n_attending_meeting_registered: None,
             new_meeting_text: "".to_owned(),
             new_topic_text: "".to_owned(),
             user_id: UserIdState::New,
             user_topics: vec![],
             active_tab: Tab::TopicManagment,
+            meeting_poll: None,
             vote_poll: None,
         };
         model.fetch_user("create", ctx);
@@ -711,6 +749,20 @@ impl Component for Model {
                     true
                 }
             }
+            Msg::CheckMeetings => {
+                match self.active_tab {
+                    Tab::MeetingManagement | Tab::MeetingPrep => {
+                        ctx.link().send_future(async {
+                            match fetch_meetings().await {
+                                Ok(meetings) => Msg::SetMeetings(meetings),
+                                Err(e) => Msg::LogError(e),
+                            }
+                        });
+                    }
+                    _ => self.meeting_poll = None,
+                }
+                true
+            }
             Msg::CommitVote => {
                 if let Some(meeting_id) = self.attending_meeting {
                     let meeting_id = boxed::Box::new(meeting_id);
@@ -773,19 +825,6 @@ impl Component for Model {
                 ctx.link().send_message(Msg::FetchUserTopics);
                 false
             }
-            Msg::FetchNMeetingParticipants(meeting_id) => {
-                let id = boxed::Box::new(meeting_id);
-                ctx.link().send_future(async {
-                    match fetch_n_meeting_participants(id).await {
-                        Ok(MeetingParticipantsMessage {
-                            n_joined,
-                            n_registered,
-                        }) => Msg::SetNRegisteredNJoined((n_registered, n_joined)),
-                        Err(e) => Msg::LogError(e),
-                    }
-                });
-                true
-            }
             Msg::FetchMeetingTopics(meeting_id) => {
                 let id = boxed::Box::new(meeting_id);
                 ctx.link().send_future(async {
@@ -806,10 +845,24 @@ impl Component for Model {
                 true
             }
             Msg::LeaveMeeting => {
-                self.attending_meeting = None;
-                self.election_results = None;
-                self.vote_poll = None;
-                self.active_tab = Tab::MeetingManagement;
+                if let Some(meeting_to_leave) = self.attending_meeting {
+                    let meeting = Box::new(meeting_to_leave);
+                    ctx.link().send_future(async {
+                        match leave_meeting(meeting.clone()).await {
+                            Ok(_) => Msg::LeftMeeting(meeting),
+                            Err(e) => Msg::LogError(e),
+                        }
+                    });
+                }
+                true
+            }
+            Msg::LeftMeeting(meeting) => {
+                if self.attending_meeting.is_some() && self.attending_meeting.unwrap() == *meeting {
+                    self.attending_meeting = None;
+                    self.election_results = None;
+                    self.vote_poll = None;
+                    self.active_tab = Tab::MeetingManagement;
+                }
                 true
             }
             Msg::LogError(e) => {
@@ -863,20 +916,23 @@ impl Component for Model {
                 self.meetings = meetings;
                 true
             }
-            Msg::SetNRegisteredNJoined((n_registered, n_joined)) => {
-                self.n_attending_meeting_registered = Some(n_registered);
-                self.n_attending_meeting_joined = Some(n_joined);
-                true
-            }
             Msg::SetTab(tab) => {
                 let prev_tab = self.active_tab.clone();
                 self.active_tab = tab.clone();
                 if let Some(meeting_id) = self.attending_meeting {
                     if tab == Tab::MeetingPrep && tab != prev_tab {
-                        ctx.link()
-                            .send_message(Msg::FetchNMeetingParticipants(meeting_id));
+                        ctx.link().send_message(Msg::CheckMeetings);
                         ctx.link().send_message(Msg::FetchMeetingTopics(meeting_id));
                     }
+                }
+                if tab.needs_meeting_poll() && !prev_tab.needs_meeting_poll() {
+                    let handle = {
+                        let link = ctx.link().clone();
+                        Interval::new(CHECK_ELECTION_MS, move || {
+                            link.send_message(Msg::CheckMeetings)
+                        })
+                    };
+                    self.meeting_poll = Some(handle);
                 }
                 true
             }
@@ -956,23 +1012,34 @@ impl Component for Model {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
+        if no_user() {
+            return html! {};
+        }
         let onkeypress = ctx
             .link()
             .batch_callback(move |e: KeyboardEvent| (e.key() == "Enter").then(|| Msg::AddTopic));
         let new_topic = if let UserIdState::Fetched(_uid) = &self.user_id {
             html! {
-                <div>
-                    <input
-                        id="new-topic" type="text" value={self.new_topic_text.clone()}
-                        { onkeypress }
-                        oninput={ctx.link().callback(|e: InputEvent| {
-                                let input = e.target_unchecked_into::<HtmlInputElement>();
-                                Msg::UpdateNewTopicText(input.value())
-                        })}
-                    />
-                    <button
-                        type={"button"} class={"btn"}
-                        onclick={ctx.link().callback(|_| Msg::AddTopic)}>{ add_icon() }</button>
+                <div class="container">
+                    <div class="row">
+                        <div class="col text-end">{ "Add new topic:" }</div>
+                        <div class="col">
+                            <input
+                                id="new-topic" type="text" value={self.new_topic_text.clone()}
+                                { onkeypress }
+                                oninput={ctx.link().callback(|e: InputEvent| {
+                                        let input = e.target_unchecked_into::<HtmlInputElement>();
+                                        Msg::UpdateNewTopicText(input.value())
+                                })}
+                            />
+                        </div>
+                        <div class="col text-start">
+                            <button
+                                type={"button"} class={"btn"}
+                                onclick={ctx.link().callback(|_| Msg::AddTopic)}>{ add_icon() }</button>
+                        </div>
+                    </div>
+                    <hr/>
                 </div>
             }
         } else {

@@ -1,6 +1,6 @@
 use yew::{html, Callback, Component, Context, Html, Properties};
 
-use ehall::argsort;
+use ehall::{argsort, COHORT_QUORUM};
 
 use crate::svg::{down_arrow, up_arrow, x_icon};
 
@@ -9,6 +9,8 @@ pub struct Props {
     pub ids: Vec<u32>,
     pub labels: Vec<String>,
     pub scores: Vec<u32>,
+    pub registered_counts: Option<Vec<u32>>,
+    pub joined_counts: Option<Vec<u32>>,
     pub store_score: Callback<(u32, u32)>,
     pub delete: Option<Callback<u32>>,
     pub is_registered: Option<Vec<bool>>,
@@ -106,6 +108,8 @@ impl Component for Ranking {
             ids,
             labels,
             scores,
+            registered_counts,
+            joined_counts,
             is_registered,
             attend_meeting,
             register_toggle,
@@ -114,90 +118,121 @@ impl Component for Ranking {
         let order = argsort(scores);
         let mut items: Vec<_> = vec![];
 
-        for i in order.into_iter().rev() {
+        for (list_item_offset, i) in order.into_iter().rev().enumerate() {
             let id = ids[i];
-            let attend_meeting_html = if attend_meeting.is_some() {
-                let is_reg = is_registered.as_ref().unwrap()[i];
+            let attend_meeting_html = if attend_meeting.is_some()
+                && is_registered.as_ref().unwrap()[i]
+                && registered_counts.is_some()
+                && registered_counts.as_ref().unwrap()[i] >= COHORT_QUORUM as u32
+            {
                 html! {
-                    <div class="col">
+                    <td>
                         <button
                             onclick={ctx.link().callback(move |_| Msg::AttendMeeting(id))}
-                            disabled={!is_reg}
                             type={"button"}
                             class={"btn btn-secondary"}
                         >{"join now"}</button>
-                    </div>
+                    </td>
                 }
             } else {
-                html! {}
+                html! { <td></td> }
             };
             let register_toggle_html = if register_toggle.is_some() {
                 let is_reg = is_registered.as_ref().unwrap()[i];
                 let register_id = format!("register{id}");
-                let register_class = if is_reg {
-                    "btn btn-primary"
-                } else {
-                    "btn btn-secondary"
-                };
                 html! {
-                    <div class="col">
-                        <input
-                            id={register_id.clone()}
-                            class="btn-check"
-                            type={"checkbox"}
-                            checked={ is_reg }
-                            autocomplete={"off"}
-                            onclick={ctx.link().callback(move |_| Msg::RegisterToggle(id))}
-                        />
-                        <label
-                            class={register_class}
-                            for={register_id}>{"register"}
-                        </label>
-                    </div>
+                    <td>
+                        <div class="form-check">
+                            <input
+                                id={register_id.clone()}
+                                class="form-check-input"
+                                type={"checkbox"}
+                                value=""
+                                checked={ is_reg }
+                                autocomplete={"off"}
+                                onclick={ctx.link().callback(move |_| Msg::RegisterToggle(id))}
+                            />
+                            <label
+                                class="form-check-label"
+                                for={register_id}>{"register"}
+                            </label>
+                        </div>
+                    </td>
                 }
             } else {
-                html! {}
+                html! { <td></td> }
             };
             let delete_html = if delete.is_some() {
                 html! {
-                    <div class="col">
+                    <td>
                         <button
                         onclick={ctx.link().callback(move |_| Msg::Delete(id))}
                         type={"button"}
                         class={"btn"}
                         >{ x_icon() }</button>
-                    </div>
+                    </td>
+                }
+            } else {
+                html! { <td></td> }
+            };
+            let up_button = if list_item_offset == 0 {
+                html! {}
+            } else {
+                html! {
+                    <button
+                    onclick={ctx.link().callback(move |_| Msg::Up(id))}
+                    type={"button"}
+                    class={"btn"}
+                    >{ up_arrow() }</button>
+                }
+            };
+            let down_button = if list_item_offset == scores.len() - 1 {
+                html! {}
+            } else {
+                html! {
+                    <button
+                    onclick={ctx.link().callback(move |_| Msg::Down(id))}
+                    type={"button"}
+                    class={"btn"}
+                    >{ down_arrow() }</button>
+                }
+            };
+            let participants_html = if registered_counts.is_some() && joined_counts.is_some() {
+                let r = registered_counts.as_ref().unwrap()[i];
+                let j = joined_counts.as_ref().unwrap()[i];
+                html! {
+                    <>
+                        <td>{format!("registered:{r}")}</td>
+                        <td>{format!("joined:{j}")}</td>
+                    </>
                 }
             } else {
                 html! {}
             };
             items.push(html! {
-                <div class={"row"}>
+                <tr>
                     {attend_meeting_html}
                     {register_toggle_html}
-                    <div class="col">
+                    <td>
                         {labels[i].clone()}
-                    </div>
-                    <div class="col">
-                        <button
-                        onclick={ctx.link().callback(move |_| Msg::Up(id))}
-                        type={"button"}
-                        class={"btn"}
-                        >{ up_arrow() }</button>
-                        <button
-                        onclick={ctx.link().callback(move |_| Msg::Down(id))}
-                        type={"button"}
-                        class={"btn"}
-                        >{ down_arrow() }</button>
-                    </div>
+                    </td>
+                    <td>
+                        {up_button}
+                    </td>
+                    <td>
+                        {down_button}
+                    </td>
+                    {participants_html}
                     {delete_html}
-                </div>
+                </tr>
             });
         }
         html! {
-            <div class="container">
-                {items}
-            </div>
+            <table class="table table-striped">
+                <tbody>
+                    {items}
+                </tbody>
+            </table>
         }
     }
 }

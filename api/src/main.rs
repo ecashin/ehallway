@@ -18,9 +18,9 @@ use tokio::time;
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    CohortMessage, ElectionResults, Meeting, MeetingMessage, MeetingParticipantsMessage,
-    NewMeeting, NewTopicMessage, ParticipateMeetingMessage, RegisteredMeetingsMessage,
-    ScoreMessage, UserTopic, UserTopicsMessage,
+    COHORT_QUORUM, CohortMessage, ElectionResults, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
+    ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserTopic,
+    UserTopicsMessage,
 };
 
 mod chance;
@@ -226,7 +226,7 @@ async fn store_cohorts_for_group(client: &Client, cohort_group: i64, meeting_id:
         .iter()
         .map(|row| row.get::<_, String>(0))
         .collect();
-    let cohorts = chance::cohorts(emails.len(), 3).unwrap();
+    let cohorts = chance::cohorts(emails.len(), COHORT_QUORUM).unwrap();
     let cohort_rows: Vec<_> = cohorts
         .into_iter()
         .enumerate()
@@ -513,6 +513,28 @@ async fn add_new_topic(
     Ok(json!({ "inserted": id as u32 }))
 }
 
+#[delete("/meeting/<id>/attendees")]
+async fn leave_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
+    let identifier = id as i64;
+    let sql = "
+        delete from meeting_attendees
+        where meeting = $1 and email = $2
+    ";
+    client
+        .execute(sql, &[&identifier, &user.email()])
+        .await
+        .unwrap();
+    let sql = "
+        delete from meeting_topics
+        where meeting = $1 and email = $2
+    ";
+    client
+        .execute(sql, &[&identifier, &user.email()])
+        .await
+        .unwrap();
+    json!({ "left": id })
+}
+
 #[post("/meeting/<id>/attendees")]
 async fn attend_meeting(user: User, client: &State<sync::Arc<Client>>, id: u32) -> Value {
     let identifier = id as i64;
@@ -680,42 +702,25 @@ async fn store_user_topic_score(
 }
 
 const GET_SCORED_MEETINGS: &str = "
-    select meetings.name, meetings.id, coalesce(score,0) as score
-    from meetings left outer join
-        (select id, score
-            from meetings left outer join meeting_scores
-            on meetings.id = meeting_scores.meeting
-            where email = $1) q
-    on meetings.id = q.id;
+    select
+        meetings.name,
+        meetings.id,
+        coalesce(meeting_scores.score,0) as score,
+        coalesce(r.n_registered,0) as n_registered,
+        coalesce(a.n_attending,0) as n_attending
+    from meetings
+    left outer join meeting_scores on meetings.id = meeting_scores.meeting
+    left join (
+        select meeting, count(email) as n_registered
+        from meeting_participants
+        group by meeting
+    ) r on meetings.id = r.meeting
+    left join (
+        select meeting, count(email) as n_attending
+        from meeting_attendees
+        group by meeting
+    ) a on meetings.id = a.meeting;
 ";
-
-#[get("/meeting/<id>/participant_counts")]
-async fn get_meeting_participants(
-    _user: User,
-    client: &State<sync::Arc<Client>>,
-    id: u32,
-) -> Json<MeetingParticipantsMessage> {
-    let sql = "
-        select (
-            select count(*) from meeting_attendees
-            where meeting = $1
-        ) as n_joined,
-        (select count(*) from meeting_participants
-            where meeting = $1
-        ) as n_registered
-    ";
-    let id = id as i64;
-    let stmt = client.prepare(sql).await.unwrap();
-    let rows = client.query(&stmt, &[&id]).await.unwrap();
-    let row = rows.get(0).unwrap();
-    let n_joined = row.get::<_, i64>(0);
-    let n_registered = row.get::<_, i64>(1);
-    MeetingParticipantsMessage {
-        n_joined: n_joined as u32,
-        n_registered: n_registered as u32,
-    }
-    .into()
-}
 
 async fn get_meeting_topics_vec(
     client: &State<sync::Arc<Client>>,
@@ -786,20 +791,24 @@ async fn get_registered_meetings(
 }
 
 #[get("/meetings")]
-async fn get_meetings(user: User, client: &State<sync::Arc<Client>>) -> Value {
+async fn get_meetings(_user: User, client: &State<sync::Arc<Client>>) -> Value {
     let stmt = client.prepare(GET_SCORED_MEETINGS).await.unwrap();
-    let rows = client.query(&stmt, &[&user.email()]).await.unwrap();
+    let rows = client.query(&stmt, &[]).await.unwrap();
     let meetings: Vec<_> = rows
         .iter()
         .map(|row| {
             let name = row.get::<_, String>(0);
             let id = row.get::<_, i64>(1);
             let score = row.get::<_, i32>(2);
+            let n_registered = row.get::<_, i64>(3);
+            let n_attending = row.get::<_, i64>(4);
             assert_eq!(id as u32 as i64, id); // XXX: later maybe stringify this ID
             MeetingMessage {
                 meeting: Meeting {
                     name,
                     id: id as u32,
+                    n_registered: n_registered as u32,
+                    n_joined: n_attending as u32,
                 },
                 score: score as u32,
             }
@@ -901,7 +910,6 @@ async fn main() -> anyhow::Result<()> {
                 delete,
                 delete_meeting,
                 delete_topic,
-                get_meeting_participants,
                 get_meeting_topics,
                 get_meetings,
                 get_registered_meetings,
@@ -911,6 +919,7 @@ async fn main() -> anyhow::Result<()> {
                 get_election_results,
                 get_signup,
                 index,
+                leave_meeting,
                 logout,
                 meeting_register,
                 post_login,

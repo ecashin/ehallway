@@ -2,6 +2,8 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
+pub const COHORT_QUORUM: usize = 3;
+
 /// A None cohort means try again.
 #[derive(Serialize, Deserialize)]
 pub struct CohortMessage {
@@ -21,9 +23,6 @@ pub struct ElectionResults {
 pub struct Meeting {
     pub name: String,
     pub id: u32,
-}
-#[derive(Serialize, Deserialize)]
-pub struct MeetingParticipantsMessage {
     pub n_joined: u32,
     pub n_registered: u32,
 }
