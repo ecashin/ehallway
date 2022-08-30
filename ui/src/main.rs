@@ -410,6 +410,7 @@ impl Model {
     fn meeting_election_results_html(&self, _ctx: &Context<Self>) -> Html {
         let ElectionResults {
             meeting_name,
+            meeting_url,
             topics,
             users,
             ..
@@ -447,6 +448,7 @@ impl Model {
         html! {
             <>
                 <h2>{ meeting_name }</h2>
+                <a href={meeting_url.clone()}>{meeting_url}</a>
                 <h3>{"Your Group"}</h3>
                 <div class="container">
                     {users_html}
