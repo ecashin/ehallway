@@ -14,13 +14,14 @@ use rocket::{delete, form::*, get, post, put, response::Redirect, routes, State}
 use rocket_auth::{prelude::Error, *};
 use rocket_dyn_templates::Template;
 use serde_json::json;
+use sha2::Digest;
 use tokio::time;
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    COHORT_QUORUM, CohortMessage, ElectionResults, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
+    CohortMessage, ElectionResults, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
     ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserTopic,
-    UserTopicsMessage,
+    UserTopicsMessage, COHORT_QUORUM,
 };
 
 mod chance;
@@ -387,13 +388,31 @@ async fn get_election_results(
         dbg!("empty cohort for user");
         (None, None)
     };
+    let name = meeting_name(client, id).await;
+    let url = meeting_url(id, &name, &topics, &cohort);
     ElectionResults {
         meeting_id: id,
-        meeting_name: meeting_name(client, id).await,
+        meeting_name: name,
         topics,
         users: cohort,
+        meeting_url: url,
     }
     .into()
+}
+
+fn meeting_url(
+    meeting_id: u32,
+    meeting_name: &str,
+    topics: &Option<Vec<UserTopic>>,
+    cohort: &Option<Vec<String>>,
+) -> String {
+    if topics.is_none() || cohort.is_none() {
+        return "".to_owned();
+    }
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(format!("{meeting_id}:{meeting_name}:{topics:?}").as_bytes());
+    hasher.update(format!(":{cohort:?}").as_bytes());
+    format!("https://meet.jit.si/ehallway/{:x}", hasher.finalize())
 }
 
 async fn meeting_name(client: &State<sync::Arc<Client>>, meeting_id: u32) -> String {
