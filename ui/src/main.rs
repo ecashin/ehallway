@@ -410,6 +410,8 @@ impl Model {
     fn meeting_election_results_html(&self, _ctx: &Context<Self>) -> Html {
         let ElectionResults {
             meeting_name,
+            meeting_url,
+            status,
             topics,
             users,
             ..
@@ -447,6 +449,8 @@ impl Model {
         html! {
             <>
                 <h2>{ meeting_name }</h2>
+                <p>{ status }</p>
+                <a href={meeting_url.clone()}>{meeting_url}</a>
                 <h3>{"Your Group"}</h3>
                 <div class="container">
                     {users_html}
@@ -515,11 +519,19 @@ impl Model {
             } else {
                 html! {}
             };
+            let status_html = if let Some(results) = &self.election_results {
+                html! {
+                    <p>{ results.status.clone() }</p>
+                }
+            } else {
+                html! {}
+            };
             html! {
                 <div class="container">
                     <div class="row">
                         <h2>{ format!("Attending meeting: {}", meeting_name) }</h2>
                         {join_info_html}
+                        {status_html}
                         <button
                             onclick={ctx.link().callback(move |_| Msg::LeaveMeeting)}
                             type={"button"}
@@ -736,7 +748,7 @@ impl Component for Model {
                         let m_id = *meeting_id;
                         match fetch_election_status(meeting_id).await {
                             Ok(msg) => {
-                                if msg.meeting_id == m_id && msg.topics.is_some() {
+                                if msg.meeting_id == m_id {
                                     Msg::SetElectionResults(msg)
                                 } else {
                                     let e = anyhow!("election status response: {:?}", &msg);
@@ -894,7 +906,9 @@ impl Component for Model {
             Msg::SetElectionResults(results) => {
                 if let Some(meeting) = self.attending_meeting {
                     if results.meeting_id == meeting {
-                        self.vote_poll = None;
+                        if results.topics.is_some() {
+                            self.vote_poll = None;
+                        }
                         self.election_results = Some(results);
                         true
                     } else {
@@ -1071,7 +1085,7 @@ impl Component for Model {
                             self.meeting_management_html(ctx)
                         }
                         Tab::MeetingPrep => {
-                            if self.election_results.is_none() {
+                            if self.election_results.is_none() || self.election_results.as_ref().unwrap().topics.is_none() {
                                 self.meeting_attendance_html(ctx)
                             } else {
                                 self.meeting_election_results_html(ctx)

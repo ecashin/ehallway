@@ -14,13 +14,14 @@ use rocket::{delete, form::*, get, post, put, response::Redirect, routes, State}
 use rocket_auth::{prelude::Error, *};
 use rocket_dyn_templates::Template;
 use serde_json::json;
+use sha2::Digest;
 use tokio::time;
 use tokio_postgres::{connect, Client, NoTls};
 
 use ehall::{
-    COHORT_QUORUM, CohortMessage, ElectionResults, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
+    CohortMessage, ElectionResults, Meeting, MeetingMessage, NewMeeting, NewTopicMessage,
     ParticipateMeetingMessage, RegisteredMeetingsMessage, ScoreMessage, UserTopic,
-    UserTopicsMessage,
+    UserTopicsMessage, COHORT_QUORUM,
 };
 
 mod chance;
@@ -359,7 +360,7 @@ async fn get_election_results(
     id: u32,
 ) -> Json<ElectionResults> {
     let cohort = cohort_for_user(client, id as i64, user.email()).await;
-    let (topics, cohort) = if let Some(mut cohort) = cohort {
+    let (topics, cohort, status) = if let Some(mut cohort) = cohort {
         let sql = "
             select email, voted from meeting_attendees
             where meeting = $1 and email in (select epeers($2, $1))
@@ -370,30 +371,50 @@ async fn get_election_results(
         let mut emails: Vec<_> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
         let voted: Vec<_> = rows.iter().map(|row| row.get::<_, bool>(1)).collect();
         if voted.len() != cohort.len() || !voted.iter().all(|v| *v) {
-            (None, None)
+            (None, None, "Cohort voting not finished".to_owned())
         } else {
             cohort.sort();
             emails.sort();
             if cohort != emails {
-                (None, None)
+                (None, None, "Unexpected cohort email mismatch".to_owned())
             } else {
                 (
                     Some(elected_topics(client, user.email(), id).await),
                     Some(cohort),
+                    "Vote finished".to_owned(),
                 )
             }
         }
     } else {
         dbg!("empty cohort for user");
-        (None, None)
+        (None, None, "Empty cohort for user".to_owned())
     };
+    let name = meeting_name(client, id).await;
+    let url = meeting_url(id, &name, &topics, &cohort);
     ElectionResults {
         meeting_id: id,
-        meeting_name: meeting_name(client, id).await,
+        meeting_name: name,
         topics,
         users: cohort,
+        meeting_url: url,
+        status,
     }
     .into()
+}
+
+fn meeting_url(
+    meeting_id: u32,
+    meeting_name: &str,
+    topics: &Option<Vec<UserTopic>>,
+    cohort: &Option<Vec<String>>,
+) -> String {
+    if topics.is_none() || cohort.is_none() {
+        return "".to_owned();
+    }
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(format!("{meeting_id}:{meeting_name}:{topics:?}").as_bytes());
+    hasher.update(format!(":{cohort:?}").as_bytes());
+    format!("https://meet.jit.si/ehallway/{:x}", hasher.finalize())
 }
 
 async fn meeting_name(client: &State<sync::Arc<Client>>, meeting_id: u32) -> String {
