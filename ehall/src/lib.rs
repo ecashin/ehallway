@@ -18,6 +18,7 @@ pub struct ElectionResults {
     pub topics: Option<Vec<UserTopic>>,
     pub users: Option<Vec<String>>,
     pub meeting_url: String,
+    pub status: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Hash, PartialEq, Eq)]
